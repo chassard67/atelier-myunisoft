@@ -4,8 +4,8 @@ Durée : 3 minutes. Chrome à jour (version 120 minimum).
 
 ## 1. Télécharger
 
-1. Télécharger le fichier **atelier-myunisoft-extension.zip** depuis la page de publication
-   (lien fourni par Nicolas).
+1. Télécharger **atelier-myunisoft-extension.zip** depuis
+   https://chassard67.github.io/atelier-myunisoft/
 2. Créer le dossier `C:\AtelierMyUnisoft\extension` et y **extraire** le zip.
    Garder toujours ce même dossier : les mises à jour de l'extension s'y feront.
 

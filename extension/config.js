@@ -5,8 +5,9 @@
 export const DEFAULTS = {
   // Adresse où sont publiés les modules (dossier "dist" du dépôt, publié par
   // GitHub Pages). DOIT se terminer par "/".
-  // TODO : remplacer par l'URL définitive (domaine perso) une fois le dépôt créé.
-  baseUrl: 'https://scripts.example.com/',
+  // Adresse GitHub Pages par défaut ; à remplacer par le domaine perso
+  // (ex. https://atelier.mondomaine.fr/) une fois le CNAME configuré.
+  baseUrl: 'https://chassard67.github.io/atelier-myunisoft/',
 
   // Intervalle de vérification automatique des mises à jour (minutes).
   checkIntervalMin: 30,
