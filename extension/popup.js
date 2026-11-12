@@ -170,10 +170,10 @@ $('check').addEventListener('click', async (e) => {
 $('save-licence').addEventListener('click', async () => {
   $('save-licence').disabled = true;
   try {
-    await send('set-licence', { key: $('licence-key').value });
-    forceLicenceBox = false;
+    const r = await send('set-licence', { key: $('licence-key').value });
+    forceLicenceBox = r.licence !== 'active' && r.licence !== 'not-required';
     await render();
-    showReloadHint();
+    if (!forceLicenceBox) showReloadHint();
   } finally {
     $('save-licence').disabled = false;
   }

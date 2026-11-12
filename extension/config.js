@@ -36,6 +36,7 @@ export const LICENCE_GRACE_DAYS = 14;
 
 // Notes affichées aux utilisateurs quand la COQUILLE elle-même est mise à jour.
 export const EXTENSION_NOTES = {
+  '1.1.1': ['Correctif : la clé de licence est prise en compte dès sa validation.'],
   '1.1.0': [
     'Fonctionnalités activables une à une depuis l\'icône de l\'extension.',
     'Licence d\'utilisation (clé à saisir dans l\'extension).',

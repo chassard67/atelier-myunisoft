@@ -189,7 +189,15 @@ async function getCachedCode(file) {
 
 let updateInFlight = null;
 
-function checkForUpdates(reason = 'auto') {
+// fresh : si une vérification tourne déjà (ex. celle lancée au rechargement
+// de l'extension), on attend sa fin puis on en relance une, pour tenir compte
+// d'un réglage qui vient de changer (clé de licence saisie, source...).
+// Sans cela, la saisie de la clé renvoyait le résultat de la vérification en
+// cours, faite SANS la clé (« Aucune clé saisie »).
+function checkForUpdates(reason = 'auto', { fresh = false } = {}) {
+  if (updateInFlight && fresh) {
+    return updateInFlight.catch(() => {}).then(() => checkForUpdates(reason));
+  }
   if (!updateInFlight) {
     updateInFlight = doCheckForUpdates(reason).finally(() => {
       updateInFlight = null;
@@ -519,7 +527,7 @@ async function handlePopup(msg) {
       };
     }
     case 'check':
-      return checkForUpdates('manual');
+      return checkForUpdates('manual', { fresh: true });
     case 'set-module':
       await patchConfig({ modules: { [msg.id]: !!msg.value } });
       return applyRegistrations();
@@ -534,12 +542,12 @@ async function handlePopup(msg) {
       return applyRegistrations();
     case 'set-licence':
       await patchConfig({ licenceKey: normalizeKey(msg.key) });
-      return checkForUpdates('manual');
+      return checkForUpdates('manual', { fresh: true });
     case 'set-base-url': {
       let url = String(msg.baseUrl || '').trim();
       if (url && !url.endsWith('/')) url += '/';
       await patchConfig({ baseUrl: url || DEFAULTS.baseUrl });
-      return checkForUpdates('manual');
+      return checkForUpdates('manual', { fresh: true });
     }
     case 'reload-tabs': {
       const tabs = await chrome.tabs.query({ url: APP_MATCHES });
