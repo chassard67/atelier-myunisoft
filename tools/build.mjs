@@ -133,7 +133,22 @@ export function build({ zip = false } = {}) {
   const lic = fs.existsSync(licPath) ? JSON.parse(fs.readFileSync(licPath, 'utf8')) : { licences: [] };
   fs.writeFileSync(
     path.join(DIST, 'licences.json'),
-    JSON.stringify({ format: 1, licences: lic.licences.map(({ hash, client, status }) => ({ hash, client, status })) }, null, 2)
+    JSON.stringify(
+      {
+        format: 1,
+        // Échéance : une licence dont la date est passée est publiée « expired »
+        // (la coquille la traite comme suspendue). Une publication quotidienne
+        // automatique (workflow, cron) applique les échéances sans push.
+        licences: lic.licences.map(({ hash, client, status, expires }) => ({
+          hash,
+          client,
+          status: status === 'active' && expires && expires < new Date().toISOString().slice(0, 10) ? 'expired' : status,
+          ...(expires ? { expires } : {}),
+        })),
+      },
+      null,
+      2
+    )
   );
   fs.writeFileSync(path.join(DIST, 'manifest.json'), JSON.stringify(manifest, null, 2));
 

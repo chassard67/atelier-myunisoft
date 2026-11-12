@@ -82,7 +82,15 @@ node tools/licence.mjs add "Cabinet Dupont"     # affiche la clé à transmettre
 node tools/licence.mjs list
 node tools/licence.mjs block "Cabinet Dupont"   # suspend
 node tools/licence.mjs unblock "Cabinet Dupont" # réactive
+node tools/licence.mjs add "Cabinet Dupont" --expires 2027-12-31   # clé avec échéance
+node tools/licence.mjs expires "Cabinet Dupont" 2028-12-31         # prolonger (« none » = sans échéance)
 ```
+
+Échéance : le jour suivant la date, la licence est publiée « expired » par la republication
+automatique quotidienne (03:17 UTC) et le client voit ses fonctionnalités coupées comme une
+suspension. Sans PC : on peut aussi modifier `licences.json` directement sur github.com
+(crayon « Edit », champs `status` = `active`/`blocked` et `expires`), puis « Commit changes ».
+Seule la création d'une clé demande l'outil (il faut calculer l'empreinte).
 
 Puis commit + push. Effet chez le client à la prochaine vérification de son extension (≤ 30 min,
 démarrage de Chrome, ou bouton « Vérifier ») : plus aucun module injecté, bandeau « licence

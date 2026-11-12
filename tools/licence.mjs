@@ -5,7 +5,9 @@
 // clé : la clé en clair n'est affichée qu'une fois, à la création — à
 // transmettre au client (et à garder de votre côté si besoin).
 //
-//   node tools/licence.mjs add "Cabinet Dupont"        → crée une clé active
+//   node tools/licence.mjs add "Cabinet Dupont"        → crée une clé active (sans échéance)
+//   node tools/licence.mjs add "Cabinet Dupont" --expires 2027-12-31
+//   node tools/licence.mjs expires "Cabinet Dupont" 2028-06-30   → change l'échéance (« none » = sans échéance)
 //   node tools/licence.mjs list                        → liste les licences
 //   node tools/licence.mjs block "Cabinet Dupont"      → suspend (client ou n° de la liste)
 //   node tools/licence.mjs unblock "Cabinet Dupont"    → réactive
@@ -44,6 +46,11 @@ function find(d, who) {
   throw new Error(`Licence introuvable : ${who}`);
 }
 
+function checkDate(v) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(v || '') || isNaN(Date.parse(v))) throw new Error('Date attendue au format AAAA-MM-JJ : ' + v);
+  return v;
+}
+
 const [cmd, ...args] = process.argv.slice(2);
 const d = load();
 const today = new Date().toISOString().slice(0, 10);
@@ -51,12 +58,24 @@ const today = new Date().toISOString().slice(0, 10);
 try {
   switch (cmd) {
     case 'add': {
-      const client = args.join(' ').trim();
-      if (!client) throw new Error('Usage : node tools/licence.mjs add "Nom du client"');
+      const ei = args.indexOf('--expires');
+      const expires = ei >= 0 ? checkDate(args[ei + 1]) : null;
+      const client = (ei >= 0 ? args.slice(0, ei) : args).join(' ').trim();
+      if (!client) throw new Error('Usage : node tools/licence.mjs add "Nom du client" [--expires AAAA-MM-JJ]');
       const key = newKey();
-      d.licences.push({ hash: hash(key), client, status: 'active', created: today });
+      d.licences.push({ hash: hash(key), client, status: 'active', created: today, ...(expires ? { expires } : {}) });
       save(d);
-      console.log(`Licence créée pour « ${client} » :\n\n    ${key}\n\nÀ transmettre au client (elle n'est PAS conservée en clair). Puis git commit + push.`);
+      console.log(`Licence créée pour « ${client} »${expires ? ' (échéance ' + expires + ')' : ''} :\n\n    ${key}\n\nÀ transmettre au client (elle n'est PAS conservée en clair). Puis git commit + push.`);
+      break;
+    }
+    case 'expires': {
+      const date = args[args.length - 1];
+      const l = find(d, args.slice(0, -1).join(' '));
+      if (/^none$/i.test(date)) delete l.expires;
+      else l.expires = checkDate(date);
+      l.updated = today;
+      save(d);
+      console.log(`« ${l.client} » : ${l.expires ? 'échéance ' + l.expires : 'sans échéance'}. Puis git commit + push.`);
       break;
     }
     case 'block':
@@ -79,12 +98,15 @@ try {
     case undefined: {
       if (!d.licences.length) console.log('Aucune licence.');
       d.licences.forEach((l, i) =>
-        console.log(`${String(i + 1).padStart(3)}. ${l.status === 'active' ? 'active   ' : 'SUSPENDUE'}  ${l.client}  (créée ${l.created || '?'}${l.updated ? ', modifiée ' + l.updated : ''})`)
+        console.log(
+          `${String(i + 1).padStart(3)}. ${l.status !== 'active' ? 'SUSPENDUE' : l.expires && l.expires < today ? 'EXPIRÉE  ' : 'active   '}  ${l.client}` +
+            `  (créée ${l.created || '?'}${l.expires ? ', échéance ' + l.expires : ''}${l.updated ? ', modifiée ' + l.updated : ''})`
+        )
       );
       break;
     }
     default:
-      throw new Error('Commandes : add | list | block | unblock | remove');
+      throw new Error('Commandes : add | list | expires | block | unblock | remove');
   }
 } catch (e) {
   console.error('Erreur : ' + e.message);

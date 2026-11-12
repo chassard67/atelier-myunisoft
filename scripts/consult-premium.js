@@ -1,8 +1,11 @@
 // ==UserScript==
 // @name         MyUnisoft - Consultation Premium (page de consultation de compte maison)
 // @namespace    https://nicolas.chassard/myunisoft
-// @version      2.11-ext
-// @description  v2.11 (2026-11-12, demandé par Nicolas) : colonne Lettrage placée entre Débit et Crédit (ordre par défaut ;
+// @version      2.12-ext
+// @description  v2.12 (2026-11-12, demandé par Nicolas) : (1) retour au compte consulté précédemment : bouton ↶ (à gauche de ◀),
+//               touche Retour arrière (hors champ de saisie) ou Alt+← ; historique de 50 comptes ; (2) colonne « N° » discrète en tête
+//               (numéro de ligne dans l'ordre affiché, gris, petite police), ajoutée aussi aux ordres de colonnes déjà mémorisés.
+//               v2.11 (2026-11-12, demandé par Nicolas) : colonne Lettrage placée entre Débit et Crédit (ordre par défaut ;
 //               un ordre de colonnes déjà mémorisé est migré une fois, les déplacements faits ensuite restent respectés).
 //               v2.10 (2026-11-12) : PORTAGE EXTENSION CHROME « Atelier MyUnisoft » — diagnostic téléchargé en diag-N.txt (ATM.diag) au lieu de l'IPC Electron.
 //               v2.9 (2026-10-30, retours de Nicolas) : (1) ajustement automatique des colonnes : largeurs désormais MESURÉES dans le DOM (vrais styles des cellules, signe « - » et espaces des milliers compris) au lieu d'une estimation, avec marge ; (2) code journal (et lettrage, pièce, libellé, saisi par) traités comme du texte : un autre script de l'appli reformatait les valeurs 100 % numériques (ex. journal « 99 ») en chiffres alignés à droite -> séparateur invisible ajouté.
@@ -612,7 +615,8 @@
   // Panneau
   // ------------------------------------------------------------------
   const COLS = [
-    { k: 'chk', w: 34 }, { k: 'date', w: 96, t: 'Date', sort: 'date' }, { k: 'jnl', w: 70, t: 'Journal', sort: 'jnl' },
+    // (v2.12) N° de ligne discret (ordre affiché), toujours en tête après la case.
+    { k: 'chk', w: 34 }, { k: 'no', w: 42, t: 'N°' }, { k: 'date', w: 96, t: 'Date', sort: 'date' }, { k: 'jnl', w: 70, t: 'Journal', sort: 'jnl' },
     { k: 'lib', w: 300, t: 'Libellé', sort: 'lib' },
     // (v2.11) Lettrage entre Débit et Crédit (demande de Nicolas).
     { k: 'deb', w: 112, t: 'Débit', sort: 'd', num: true }, { k: 'lett', w: 78, t: 'Lettrage', sort: 'lett' }, { k: 'cre', w: 112, t: 'Crédit', sort: 'c', num: true },
@@ -625,6 +629,11 @@
     try {
       const o = JSON.parse(localStorage.getItem(COLORD_KEY) || '[]');
       if (!Array.isArray(o) || !o.length) return;
+      // (v2.12) Colonne N° ajoutée en tête si l'ordre mémorisé ne la connaît pas.
+      if (!o.includes('no')) {
+        o.splice(o[0] === 'chk' ? 1 : 0, 0, 'no');
+        localStorage.setItem(COLORD_KEY, JSON.stringify(o));
+      }
       // (v2.11) Migration unique d'un ordre déjà mémorisé : Lettrage replacé
       // entre Débit et Crédit ; un déplacement fait ensuite à la souris reste respecté.
       if (!localStorage.getItem(COLORD_KEY + '|lettMoved')) {
@@ -753,9 +762,15 @@
       stepAccount(ev.key === 'ArrowRight' ? 1 : -1);
       return;
     }
+    if (ev.altKey && ev.key === 'ArrowLeft') {
+      ev.preventDefault(); ev.stopPropagation();
+      goBackAccount();
+      return;
+    }
     const tg = ev.target || {};
     const typing = tg.tagName === 'SELECT' || tg.tagName === 'TEXTAREA' || (tg.tagName === 'INPUT' && !/^(checkbox|radio|button)$/i.test(tg.type || 'text'));
     if (ev.key === 'Escape' && !typing) { ev.stopPropagation(); closePanel(); return; }
+    if (ev.key === 'Backspace' && !typing) { ev.preventDefault(); ev.stopPropagation(); goBackAccount(); return; }
     if (typing) return;
     if ((ev.ctrlKey || ev.metaKey) && (ev.key === 'a' || ev.key === 'A')) {
       ev.preventDefault(); ev.stopPropagation();
@@ -1296,7 +1311,7 @@
     const headParts = () => ({
       cg: COLS.map((c) => '<col style="width:' + c.w + 'px">').join(''),
       h1: COLS.map((c) => c.k === 'chk' ? '<th class="h" style="text-align:center"><input data-all type="checkbox" aria-label="Tout sélectionner"></th>' : '<th class="h' + (c.sort ? ' s' : '') + (c.num ? ' n' : '') + '" data-col="' + c.k + '"' + (c.sort ? ' data-sort="' + c.sort + '"' : '') + '>' + c.t + ' <span data-arrow="' + (c.sort || '') + '"></span><span class="rz" data-rz="' + c.k + '"></span></th>').join(''),
-      h2: COLS.map((c) => (c.k === 'chk' || c.k === 'pj') ? '<th style="background:#fbfcfe;position:sticky;top:34px;z-index:2;border-bottom:1px solid #aebbd0;border-right:1px solid #c3cddd"></th>' : thFilter(c.k)).join(''),
+      h2: COLS.map((c) => (c.k === 'chk' || c.k === 'pj' || c.k === 'no') ? '<th style="background:#fbfcfe;position:sticky;top:34px;z-index:2;border-bottom:1px solid #aebbd0;border-right:1px solid #c3cddd"></th>' : thFilter(c.k)).join(''),
     });
     S.rebuildHead = () => {
       const pp = document.getElementById(PANEL_ID);
@@ -1340,6 +1355,7 @@
       '<div style="margin:0 20px;background:#fff;border:1px solid #d5dce8;border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;gap:12px">' +
       '<div style="display:flex;align-items:flex-end;gap:16px;flex-wrap:wrap">' +
       '<div style="display:flex;flex-direction:column;gap:3px"><span style="' + lbl + '">Compte</span><div style="display:flex;gap:5px;align-items:center">' +
+      '<button data-act="back" type="button" title="Compte consulté précédemment (Retour arrière)" style="' + btn + ';padding:7px 10px;opacity:.45" disabled>↶</button>' +
       '<button data-act="prev" type="button" style="' + btn + ';padding:7px 10px">◀</button>' +
       '<div style="position:relative"><input data-acc type="text" autocomplete="off" style="' + inp + ';width:360px"><div data-dd style="display:none;position:absolute;left:0;top:100%;margin-top:2px;width:600px;max-height:380px;overflow:auto;background:#fff;border:1px solid #aebbd0;border-radius:6px;box-shadow:0 8px 24px rgba(15,42,82,.25);z-index:60"></div></div>' +
       '<button data-act="next" type="button" style="' + btn + ';padding:7px 10px">▶</button>' +
@@ -1401,6 +1417,7 @@
         if (act === 'close') closePanel();
         else if (act === 'print') window.print();
         else if (act === 'xlsx') exportXlsx();
+        else if (act === 'back') goBackAccount();
         else if (act === 'prev') stepAccount(-1);
         else if (act === 'next') stepAccount(1);
         else if (act === 'reset') resetFilters();
@@ -1848,13 +1865,42 @@
     p.style.cursor = on ? 'progress' : '';
   }
 
-  async function selectAccount(num) {
+  // (v2.12) Historique des comptes consultés : Retour arrière (hors champ de
+  // saisie), Alt+← ou bouton ↶ = compte consulté précédemment.
+  const accHistory = [];
+  function goBackAccount() {
+    while (accHistory.length) {
+      const prev = accHistory.pop();
+      if (prev && prev !== S.acc) {
+        selectAccount(prev, { back: true });
+        updateBackButton();
+        return;
+      }
+    }
+    toast('Aucun compte consulté précédemment.');
+  }
+  function updateBackButton() {
+    const b = document.querySelector('#' + PANEL_ID + ' [data-act="back"]');
+    if (!b) return;
+    const prev = accHistory[accHistory.length - 1];
+    b.disabled = !prev;
+    b.style.opacity = prev ? '1' : '.45';
+    b.title = prev ? 'Revenir au compte ' + prev + ' (Retour arrière ou Alt+←)' : 'Aucun compte consulté précédemment';
+  }
+
+  async function selectAccount(num, opts) {
     if (!num) return;
+    const prevAcc = S.acc;
     setBusy(true, 'Chargement du compte ' + num + '…');
     try {
       const a = await loadAccountLines(num);
       if (a.lines.length > MAX_LINES && !window.confirm('Le compte ' + num + ' compte ' + a.lines.length + ' lignes. Les afficher quand même ?')) { setBusy(false); return; }
       S.acc = num;
+      if (!(opts && opts.back) && prevAcc && prevAcc !== num) {
+        accHistory.push(prevAcc);
+        if (accHistory.length > 50) accHistory.shift();
+      }
+      updateBackButton();
       try { localStorage.setItem('tmbcCpLastAcc|' + societyId(), num); } catch (e) { /* ignore */ }
       S.accLabel = a.label || labelFor(num);
       S.lines = a.lines;
@@ -1942,6 +1988,7 @@
   function cellFor(k, l, on) {
     switch (k) {
       case 'chk': return '<td style="text-align:center"><input type="checkbox" aria-label="Sélectionner"' + (on ? ' checked' : '') + '></td>';
+      case 'no': return '<td class="m" style="text-align:right;color:#9aa6b8;font-size:11px">' + (l.__no || '') + '</td>';
       case 'date': return '<td class="m">' + esc(l.dateTxt) + '</td>';
       case 'jnl': return '<td>' + txt(l.jnl) + '</td>';
       case 'lett': return '<td class="m" style="color:#0f6b4a">' + txt(l.lett) + '</td>';
@@ -1980,7 +2027,7 @@
     let td = 0, tc = 0;
     rows.forEach((l) => { td += l.d; tc += l.c; });
     const val = {
-      date: (l) => l.dateTxt, jnl: (l) => l.jnl, lett: (l) => l.lett, lib: (l) => l.lib,
+      no: () => String(rows.length), date: (l) => l.dateTxt, jnl: (l) => l.jnl, lett: (l) => l.lett, lib: (l) => l.lib,
       deb: (l) => (l.d ? fmt(l.d) : ''), cre: (l) => (l.c ? fmt(l.c) : ''), solde: (l) => fmt(l.solde), ms: (l) => fmt(l.ms),
       cpttc: (l) => l.cpttc || '', cpht: (l) => l.cpht || '', cptva: (l) => l.cptva || '',
       piece: (l) => l.piece + (l.piece2 ? ' / ' + l.piece2 : ''), ech: (l) => (l.ech ? isoToFr(l.ech) : ''), who: (l) => l.who,
@@ -2027,7 +2074,8 @@
       html.push(rowCells('sub', 'Sous-total ' + mk.slice(5, 7) + '/' + mk.slice(0, 4) + ' (' + mn + ')', { deb: { v: md }, cre: { v: mc, cr: true }, solde: { v: ms, neg: ms < 0 }, ms: { v: ms, neg: ms < 0 } }, false));
       md = 0; mc = 0; mn = 0;
     };
-    rows.forEach((l) => {
+    rows.forEach((l, idx) => {
+      l.__no = idx + 1;
       if (monthly) { const k2 = String(l.date).slice(0, 7); if (k2 !== mk) { flushMonth(); mk = k2; } md += l.d; mc += l.c; mn++; }
       td += l.d; tc += l.c;
       if (!l.lett) tnl += l.d - l.c;
