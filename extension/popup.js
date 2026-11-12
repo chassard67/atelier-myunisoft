@@ -69,6 +69,8 @@ async function render() {
   $('last-check').textContent = 'vérifié : ' + fmtDate(state.lastCheck);
   $('ext-id').textContent = 'ID : ' + st.extensionId;
   $('base-url').value = cfg.baseUrl;
+  $('warn-source').hidden = cfg.baseUrl === st.defaultBaseUrl;
+  $('warn-source-url').textContent = cfg.baseUrl;
 
   // Bouton « Autoriser les scripts utilisateur » / mode développeur.
   const steps = $('warn-steps');
@@ -202,11 +204,21 @@ $('save-base-url').addEventListener('click', async () => {
 });
 
 $('use-dev').addEventListener('click', async () => {
+  if (!confirm('Source de développement (localhost:8787) : ne fonctionne que si le serveur de développement tourne sur ce PC. Continuer ?')) return;
   $('base-url').value = 'http://localhost:8787/';
   await send('set-base-url', { baseUrl: 'http://localhost:8787/' });
   await render();
   showReloadHint();
 });
+
+async function useOfficial() {
+  const st = await send('status');
+  await send('set-base-url', { baseUrl: st.defaultBaseUrl });
+  await render();
+  showReloadHint();
+}
+$('use-official').addEventListener('click', useOfficial);
+$('fix-source').addEventListener('click', useOfficial);
 
 $('reset-defaults').addEventListener('click', async () => {
   await send('reset-defaults');

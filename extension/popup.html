@@ -31,6 +31,11 @@
 
   <section id="warn-ext" class="alert warning" hidden></section>
 
+  <section id="warn-source" class="alert warning small" hidden>
+    Les modules sont lus depuis une source non officielle : <code id="warn-source-url"></code>.
+    <button id="fix-source" class="primary">Revenir à la source officielle</button>
+  </section>
+
   <section>
     <div class="row between">
       <h2>Fonctionnalités</h2>
@@ -56,7 +61,8 @@
     </label>
     <div class="row gap">
       <button id="save-base-url">Enregistrer</button>
-      <button id="use-dev">Dev local (localhost:8787)</button>
+      <button id="use-official">Source officielle</button>
+      <button id="use-dev" title="Pour le développeur uniquement : nécessite node tools/serve.mjs sur ce PC">Dev local</button>
       <button id="reset-defaults">Réglages par défaut</button>
     </div>
     <p class="muted small" id="ext-id"></p>

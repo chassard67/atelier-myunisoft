@@ -531,6 +531,7 @@ async function handlePopup(msg) {
       return {
         extVersion: EXT_VERSION,
         extensionId: chrome.runtime.id,
+        defaultBaseUrl: DEFAULTS.baseUrl,
         userScripts: userScriptsAvailable(),
         chromeVersion: Number(navigator.userAgent.match(/Chrome\/(\d+)/)?.[1] || 0),
         cfg,
@@ -548,9 +549,10 @@ async function handlePopup(msg) {
       await patchConfig({ settings: { [msg.id]: !!msg.value } });
       return applyRegistrations();
     case 'reset-defaults':
+      // Fonctionnalités par défaut + source officielle (la clé de licence est gardée).
       {
         const { cfg = {} } = await chrome.storage.local.get('cfg');
-        await chrome.storage.local.set({ cfg: { ...cfg, modules: {}, settings: {} } });
+        await chrome.storage.local.set({ cfg: { ...cfg, modules: {}, settings: {}, baseUrl: DEFAULTS.baseUrl } });
       }
       return applyRegistrations();
     case 'set-licence':
