@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <title>Atelier MyUnisoft</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header>
+    <img src="icons/icon32.png" alt="">
+    <div>
+      <h1>Atelier MyUnisoft</h1>
+      <div class="sub" id="versions">…</div>
+    </div>
+  </header>
+
+  <section id="warn-userscripts" class="alert danger" hidden>
+    <strong>Une étape manque pour activer les modules.</strong>
+    <ol id="warn-steps"></ol>
+    <button id="open-ext-page" class="primary">Ouvrir la page de l'extension</button>
+  </section>
+
+  <section id="warn-ext" class="alert warning" hidden></section>
+
+  <section>
+    <div class="row between">
+      <h2>Modules</h2>
+      <span class="muted" id="last-check"></span>
+    </div>
+    <ul id="modules"><li class="muted">Aucun module téléchargé pour l'instant.</li></ul>
+    <div id="error" class="alert danger small" hidden></div>
+    <div id="reload-hint" class="alert info small" hidden>
+      Modifications appliquées. Rechargez vos onglets MyUnisoft pour en profiter.
+    </div>
+    <div class="row gap">
+      <button id="check" class="primary">Vérifier les mises à jour</button>
+      <button id="reload-tabs">Recharger les onglets MyUnisoft</button>
+    </div>
+  </section>
+
+  <section>
+    <h2>Affichage</h2>
+    <label class="check"><input type="checkbox" data-setting="centerLayout">
+      Centrer le contenu sur écran ultra-wide (≥ 1920 px)</label>
+    <label class="check"><input type="checkbox" data-setting="maximizeConsultWindow">
+      Agrandir automatiquement la fenêtre de consultation</label>
+  </section>
+
+  <details>
+    <summary>Avancé</summary>
+    <label class="field">Source des modules
+      <input type="url" id="base-url" spellcheck="false">
+    </label>
+    <div class="row gap">
+      <button id="save-base-url">Enregistrer</button>
+      <button id="use-dev">Dev local (localhost:8787)</button>
+    </div>
+    <p class="muted small" id="ext-id"></p>
+  </details>
+
+  <script src="popup.js" type="module"></script>
+</body>
+</html>

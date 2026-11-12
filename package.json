@@ -1,0 +1,11 @@
+{
+  "name": "atelier-myunisoft",
+  "private": true,
+  "type": "module",
+  "description": "Extension Chrome Atelier MyUnisoft + modules publiés sur GitHub Pages",
+  "scripts": {
+    "build": "node tools/build.mjs",
+    "dev": "node tools/serve.mjs",
+    "check": "node tools/check.mjs"
+  }
+}

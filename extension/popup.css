@@ -1,0 +1,39 @@
+:root { --navy: rgb(23, 42, 70); --green: #10b981; --muted: #6b7280; --line: #e5e7eb; }
+* { box-sizing: border-box; }
+body { width: 380px; margin: 0; font: 13px/1.4 system-ui, "Segoe UI", Arial, sans-serif; color: #111827; }
+header { display: flex; gap: 10px; align-items: center; padding: 12px 14px; background: var(--navy); color: #fff; }
+header img { width: 32px; height: 32px; }
+h1 { font-size: 15px; margin: 0; }
+h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .4px; color: var(--muted); margin: 0 0 6px; }
+.sub { font-size: 11px; opacity: .8; font-family: Consolas, monospace; }
+section, details { padding: 10px 14px; border-bottom: 1px solid var(--line); }
+summary { cursor: pointer; color: var(--muted); }
+ul { list-style: none; margin: 0 0 8px; padding: 0; }
+li.module { display: flex; align-items: center; gap: 8px; padding: 5px 0; border-bottom: 1px dashed var(--line); }
+li.module:last-child { border-bottom: 0; }
+li.module .name { flex: 1; }
+li.module .ver { font-family: Consolas, monospace; color: var(--muted); font-size: 11px; }
+.row { display: flex; align-items: center; }
+.between { justify-content: space-between; }
+.gap { gap: 6px; flex-wrap: wrap; }
+.muted { color: var(--muted); }
+.small { font-size: 11px; }
+button { font: inherit; padding: 5px 10px; border-radius: 6px; border: 1px solid var(--navy); background: #fff; color: var(--navy); cursor: pointer; }
+button.primary { background: var(--navy); color: #fff; }
+button:disabled { opacity: .5; cursor: default; }
+label.check { display: flex; gap: 6px; align-items: flex-start; margin: 4px 0; cursor: pointer; }
+label.field { display: block; margin: 8px 0; }
+label.field input { width: 100%; margin-top: 3px; padding: 5px; font-family: Consolas, monospace; font-size: 12px; }
+.alert { border-radius: 6px; padding: 8px 10px; margin: 6px 0; }
+.alert.danger { background: #fef2f2; color: #991b1b; border: 1px solid #fecaca; }
+.alert.warning { background: #fff7ed; color: #9a3412; border: 1px solid #fed7aa; }
+.alert.info { background: #ecfdf5; color: #065f46; border: 1px solid #a7f3d0; }
+section.alert { margin: 10px 14px; }
+ol { margin: 6px 0 8px; padding-left: 18px; }
+/* interrupteur */
+.switch { position: relative; width: 30px; height: 17px; flex: 0 0 auto; }
+.switch input { opacity: 0; width: 0; height: 0; }
+.switch span { position: absolute; inset: 0; background: #d1d5db; border-radius: 17px; transition: .15s; cursor: pointer; }
+.switch span::before { content: ""; position: absolute; width: 13px; height: 13px; left: 2px; top: 2px; background: #fff; border-radius: 50%; transition: .15s; }
+.switch input:checked + span { background: var(--green); }
+.switch input:checked + span::before { transform: translateX(13px); }

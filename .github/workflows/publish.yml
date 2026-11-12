@@ -1,0 +1,47 @@
+# Publie les modules sur GitHub Pages à chaque push sur main.
+# Les extensions installées récupèrent la nouvelle version à leur prochaine
+# vérification (toutes les 30 min, au démarrage de Chrome, ou bouton
+# « Vérifier les mises à jour »).
+name: Publier les modules
+
+on:
+  push:
+    branches: [main]
+    paths: ['scripts/**', 'extension/**', 'tools/**', 'publish.json', '.github/workflows/**']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Vérifier la syntaxe des modules
+        run: for f in scripts/*.js scripts/lib/*.js extension/*.js; do node --check "$f" || exit 1; done
+      - name: Construire dist/
+        run: node tools/build.mjs --zip
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
