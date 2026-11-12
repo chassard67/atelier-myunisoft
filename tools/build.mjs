@@ -115,8 +115,26 @@ export function build({ zip = false } = {}) {
     latestExtensionVersion: extManifest.version,
     connect: [...connect].sort(),
     runtime: { file: RUNTIME, sha256: sha256(runtimeSrc) },
+    licenceRequired: publishCfg.licenceRequired !== false,
+    release: publishCfg.release || null,
+    dependencies: publishCfg.dependencies || {},
+    catalog: publishCfg.catalog || [],
     scripts,
   };
+  // Cohérence du catalogue : chaque module cité doit exister.
+  const ids = new Set(scripts.map((s) => s.id));
+  for (const g of manifest.catalog) {
+    for (const it of g.items || []) {
+      if (it.type === 'module' && !ids.has(it.id)) throw new Error(`publish.json : module « ${it.id} » du catalogue introuvable dans scripts/`);
+    }
+  }
+  // Licences : seules les empreintes (SHA-256 des clés) sont publiées.
+  const licPath = path.join(ROOT, 'licences.json');
+  const lic = fs.existsSync(licPath) ? JSON.parse(fs.readFileSync(licPath, 'utf8')) : { licences: [] };
+  fs.writeFileSync(
+    path.join(DIST, 'licences.json'),
+    JSON.stringify({ format: 1, licences: lic.licences.map(({ hash, client, status }) => ({ hash, client, status })) }, null, 2)
+  );
   fs.writeFileSync(path.join(DIST, 'manifest.json'), JSON.stringify(manifest, null, 2));
 
   // Petite page d'accueil (lien de téléchargement de l'extension + versions).
@@ -131,7 +149,7 @@ td{padding:4px 12px;border-bottom:1px solid #eee}code{font-family:Consolas,monos
 <h1>Atelier MyUnisoft</h1>
 <p><a href="atelier-myunisoft-extension.zip">Télécharger l'extension Chrome</a> (v${extManifest.version})
 — voir la procédure d'installation dans le dépôt (docs/INSTALLATION.md).</p>
-<p>Publication <code>${manifest.build}</code></p><table>${rows}</table>`
+<p>Version ${manifest.release ? manifest.release.version : ''} — publication <code>${manifest.build}</code></p><table>${rows}</table>`
   );
 
   if (zip) {

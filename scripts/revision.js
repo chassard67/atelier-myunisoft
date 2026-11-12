@@ -1,8 +1,13 @@
 // ==UserScript==
 // @name         MyUnisoft - Dossier de Révision
 // @namespace    https://nicolas.chassard/myunisoft
-// @version      1.4-ext
-// @description  v1.4 (2026-11-12) : PORTAGE EXTENSION CHROME « Atelier MyUnisoft » — aucun changement fonctionnel, le module tourne désormais dans l'extension (même contexte de page que le preload).
+// @version      1.5-ext
+// @description  v1.5 (2026-11-12, retour de Nicolas : « l'affichage arrondi des cycles ne fonctionne pas tout de suite ») : nouvel onglet
+//               natif "Tableau de bord" (vue par défaut du dossier) — sur cette vue le sélecteur Section n'existe pas, la barre de
+//               pilules n'était donc construite qu'après un passage par un cycle. Elle est maintenant construite dès que la rangée de
+//               cycles est présente (insérée avant le bloc qui la contient) ; boutons Synthese/Contrôles affichés seulement si le
+//               sélecteur Section existe. Sélecteurs dadpContainer/filters rendus tolérants (suffixe stable, sans préfixe css-xxxx).
+//               v1.4 (2026-11-12) : PORTAGE EXTENSION CHROME « Atelier MyUnisoft » — aucun changement fonctionnel, le module tourne désormais dans l'extension (même contexte de page que le preload).
 //               v1.3 (2026-08-01) : BUG TROUVÉ EN DIRECT — impossible de passer de Synthese à
 //               Contrôles (le bouton ne faisait rien). Cause : chooseSection() ouvrait le menu
 //               MUI natif via un simple combo.click(), qui ne déclenche pas fiablement l'ouverture
@@ -344,19 +349,28 @@
       return;
     }
 
+    // (2026-11-12) Nouvel onglet natif "Tableau de bord" (vue par défaut à
+    // l'ouverture du dossier) : sur cette vue, le sélecteur "Section" n'existe
+    // PAS (seule la rangée Tableau de bord / Régularité... / Annexe est montée).
+    // Avant, on sortait ici faute de Section : la barre n'était donc jamais
+    // construite à l'arrivée (onglets carrés natifs), et ne l'était qu'après
+    // un passage par un cycle (barre restée en place au retour). On construit
+    // maintenant la barre dès que la rangée de cycles OU le sélecteur Section
+    // est présent ; les boutons Synthese/Contrôles ne sont affichés que si le
+    // sélecteur Section existe (ils le pilotent).
     const sectionFormControl = findSectionFormControl();
-    if (!sectionFormControl) return; // page pas encore montée
+    const cycleTabsRoot = findCycleTabsRoot();
+    if (!sectionFormControl && !cycleTabsRoot) return; // page pas encore montée
 
+    const anchor = sectionFormControl || cycleTabsRoot;
     const dadpContainer =
-      sectionFormControl.closest('.css-1oeu47d-dadpContainer') ||
-      document.querySelector('.css-1oeu47d-dadpContainer');
+      anchor.closest('[class*="dadpContainer"]') || document.querySelector('[class*="dadpContainer"]');
     if (!dadpContainer) return;
 
     const sectionValueEl = document.getElementById('mui-component-select-section');
     const currentSection = sectionValueEl ? sectionValueEl.textContent.trim() : '';
     const isSynthese = normalizeColumnName(currentSection) === normalizeColumnName('Synthèse');
 
-    const cycleTabsRoot = findCycleTabsRoot();
     const subTabsRoot = findSubTabsRoot();
 
     // Signature = tout ce qui doit déclencher une reconstruction visuelle
@@ -381,7 +395,7 @@
 
     // Masquage des blocs natifs remplacés — jamais supprimés, cf. règle du
     // projet (uniquement display:none sur les blocs remplacés).
-    sectionFormControl.style.setProperty('display', 'none', 'important');
+    if (sectionFormControl) sectionFormControl.style.setProperty('display', 'none', 'important');
     if (cycleTabsRoot) cycleTabsRoot.style.setProperty('display', 'none', 'important');
     if (subTabsRoot) subTabsRoot.style.setProperty('display', 'none', 'important');
 
@@ -389,9 +403,16 @@
       toolbar = document.createElement('div');
       toolbar.id = REVISION_TOOLBAR_ID;
       toolbar.style.cssText = 'display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:8px 0;';
-      const filtersRow = dadpContainer.querySelector('.css-q3g6r8-filters');
-      if (filtersRow && filtersRow.nextSibling) {
+      const filtersRow = dadpContainer.querySelector('[class*="-filters"]');
+      // Bloc enfant direct de dadpContainer qui contient la rangée de cycles
+      // (vue Tableau de bord, sans ligne de filtres) : la barre est insérée
+      // juste avant lui (nouveau nœud, aucun nœud natif déplacé).
+      let cycleBlock = cycleTabsRoot;
+      while (cycleBlock && cycleBlock.parentElement !== dadpContainer) cycleBlock = cycleBlock.parentElement;
+      if (filtersRow && filtersRow.parentElement === dadpContainer && filtersRow.nextSibling) {
         dadpContainer.insertBefore(toolbar, filtersRow.nextSibling);
+      } else if (cycleBlock) {
+        dadpContainer.insertBefore(toolbar, cycleBlock);
       } else {
         dadpContainer.appendChild(toolbar);
       }
@@ -453,11 +474,13 @@
     const controlesBtn = buildPillButton('Contrôles', 'AC - Contrôles', () => chooseSection('AC - Contrôles'));
     styleToolbarButton(synthBtn, isSynthese, menuColor, menuText);
     styleToolbarButton(controlesBtn, !isSynthese, menuColor, menuText);
-    toolbar.appendChild(synthBtn);
-    toolbar.appendChild(controlesBtn);
+    if (sectionFormControl) {
+      toolbar.appendChild(synthBtn);
+      toolbar.appendChild(controlesBtn);
+    }
 
     if (cycleTabsRoot) {
-      toolbar.appendChild(buildSeparator());
+      if (sectionFormControl) toolbar.appendChild(buildSeparator());
       Array.from(cycleTabsRoot.querySelectorAll('[role="tab"]')).forEach((tab) => {
         const raw = tab.textContent.trim();
         const mapped = CYCLE_TAB_LETTERS.get(normalizeColumnName(raw));

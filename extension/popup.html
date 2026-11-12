@@ -20,17 +20,26 @@
     <button id="open-ext-page" class="primary">Ouvrir la page de l'extension</button>
   </section>
 
+  <section id="licence-box" hidden>
+    <h2>Licence</h2>
+    <div id="licence-status" class="alert small"></div>
+    <label class="field">Clé de licence
+      <input type="text" id="licence-key" spellcheck="false" placeholder="ATM-XXXX-XXXX-XXXX">
+    </label>
+    <button id="save-licence" class="primary">Valider la clé</button>
+  </section>
+
   <section id="warn-ext" class="alert warning" hidden></section>
 
   <section>
     <div class="row between">
-      <h2>Modules</h2>
+      <h2>Fonctionnalités</h2>
       <span class="muted" id="last-check"></span>
     </div>
-    <ul id="modules"><li class="muted">Aucun module téléchargé pour l'instant.</li></ul>
+    <div id="catalog"><p class="muted">Aucun module téléchargé pour l'instant.</p></div>
     <div id="error" class="alert danger small" hidden></div>
     <div id="reload-hint" class="alert info small" hidden>
-      Modifications appliquées. Rechargez vos onglets MyUnisoft pour en profiter.
+      Modifications enregistrées. Rechargez vos onglets MyUnisoft pour les appliquer.
     </div>
     <div class="row gap">
       <button id="check" class="primary">Vérifier les mises à jour</button>
@@ -38,22 +47,17 @@
     </div>
   </section>
 
-  <section>
-    <h2>Affichage</h2>
-    <label class="check"><input type="checkbox" data-setting="centerLayout">
-      Centrer le contenu sur écran ultra-wide (≥ 1920 px)</label>
-    <label class="check"><input type="checkbox" data-setting="maximizeConsultWindow">
-      Agrandir les fenêtres popup MyUnisoft (consultation, MyU Vision…)</label>
-  </section>
-
   <details>
     <summary>Avancé</summary>
+    <p class="small"><span class="muted">Licence :</span> <span id="licence-mini"></span>
+      <a href="#" id="change-licence">modifier</a></p>
     <label class="field">Source des modules
       <input type="url" id="base-url" spellcheck="false">
     </label>
     <div class="row gap">
       <button id="save-base-url">Enregistrer</button>
       <button id="use-dev">Dev local (localhost:8787)</button>
+      <button id="reset-defaults">Réglages par défaut</button>
     </div>
     <p class="muted small" id="ext-id"></p>
   </details>

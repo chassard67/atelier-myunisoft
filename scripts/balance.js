@@ -1,8 +1,12 @@
 // ==UserScript==
 // @name         MyUnisoft – Balance : vue 100% personnalisée (v2, API directe)
 // @namespace    https://nicolas.chassard/myunisoft
-// @version      3.37-ext
-// @description  v3.37 (2026-11-12) : PORTAGE EXTENSION CHROME « Atelier MyUnisoft » — isElectron forcé à false : fenêtre de consultation en pleine page (branche navigateur), comme ce que produisait main.js.
+// @version      3.38-ext
+// @description  v3.38 (2026-11-12, demandé par Nicolas) : nouvelle entrée « Balance Premium » dans le menu Tenue, juste
+//               sous « Balance ». « Balance » = affichage natif strict (plus de clic automatique sur « Charger le tableau »,
+//               aucune vue maison) ; « Balance Premium » = notre vue. Mode mémorisé par onglet (sessionStorage
+//               tmbcBalanceMode) ; le bouton de bascule de la barre de titre reste disponible et met à jour ce mode.
+//               v3.37 (2026-11-12) : PORTAGE EXTENSION CHROME « Atelier MyUnisoft » — isElectron forcé à false : fenêtre de consultation en pleine page (branche navigateur), comme ce que produisait main.js.
 //               v3.36 (2026-10-21) : corrige le changement de période (dates personnalisées) qui ne rafraîchissait pas les montants — pour une période ne correspondant à aucun exercice, dossier_revision_id n'est plus envoyé (comme l'affichage natif), sinon le serveur renvoyait la révision entière en ignorant la date de fin (ex. Mano, compte 44571100 : 16 426,26 au lieu de 0 au 31/05/2026). Les dates exactes d'un exercice gardent l'identifiant. Appliqué aux balances normale et âgée.
 //               v3.35 (2026-08-01) : "Non soldés uniquement" désactivée automatiquement à
 //               l'activation d'Affichage mensuel ou Affichage mensuel cumulé — demande explicite
@@ -876,6 +880,9 @@
 
   function tryBootstrap() {
     if (bootstrapped || bootstrapGaveUp || !isBalancePage()) return;
+    // (v3.38) Rien en mode natif (menu « Balance ») : pas de clic automatique
+    // sur « Charger le tableau », la page native reste strictement native.
+    if (!readBalanceMode()) return;
     if (sniff.data && sniff.params) {
       bootstrapped = true;
       stopBootstrapPolling();
@@ -1078,7 +1085,26 @@
     hiddenNativeBlocks = [];
   }
 
-  let customActive = true; // affichage custom (Nch) actif par défaut
+  // (v3.38, 2026-11-12) Deux entrées de menu : « Balance » (native) et
+  // « Balance Premium » (notre vue), juste en dessous dans le menu Tenue. Le
+  // mode choisi est mémorisé pour l'onglet (sessionStorage) et lu à chaque
+  // installation de la vue.
+  const BALANCE_MODE_KEY = 'tmbcBalanceMode';
+  function readBalanceMode() {
+    try {
+      return sessionStorage.getItem(BALANCE_MODE_KEY) === 'premium';
+    } catch (e) {
+      return false;
+    }
+  }
+  function writeBalanceMode(premium) {
+    try {
+      sessionStorage.setItem(BALANCE_MODE_KEY, premium ? 'premium' : 'native');
+    } catch (e) {
+      /* ignore */
+    }
+  }
+  let customActive = readBalanceMode();
   let titleBlockRef = null;
 
   function installCustomUI() {
@@ -1114,6 +1140,8 @@
     injectCss();
     renderApp();
     installToggleButton(titleBlock);
+    customActive = readBalanceMode();
+    applyDisplayMode();
 
     // Le sélecteur natif "Générale / Client / Fournisseur" reste dans la
     // barre de titre : plutôt que de dupliquer ce choix dans notre panneau,
@@ -1304,7 +1332,43 @@
 
   function toggleDisplayMode() {
     customActive = !customActive;
+    writeBalanceMode(customActive);
     applyDisplayMode();
+  }
+
+  // Entrées de menu Balance / Balance Premium (cf. readBalanceMode).
+  let programmaticNativeClick = false;
+  function switchToPremium(nativeLi) {
+    writeBalanceMode(true);
+    if (isBalancePage()) {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      const dlg = document.querySelector('.MuiDialog-root:has(.dialogContainer__menu)');
+      if (dlg) dlg.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', keyCode: 27, bubbles: true, cancelable: true }));
+      if (document.getElementById('tmb-root')) {
+        customActive = true;
+        applyDisplayMode();
+      } else {
+        bootstrapGaveUp = false;
+        bootstrapClicked = false;
+        stopBootstrapPolling();
+        tryBootstrap();
+      }
+      return;
+    }
+    programmaticNativeClick = true;
+    try {
+      nativeLi.click();
+    } finally {
+      programmaticNativeClick = false;
+    }
+  }
+  function onNativeBalanceClick() {
+    if (programmaticNativeClick) return;
+    writeBalanceMode(false);
+    if (document.getElementById('tmb-root')) {
+      customActive = false;
+      applyDisplayMode();
+    }
   }
 
   function applyDisplayMode() {
@@ -3209,7 +3273,7 @@
       if (toggleBtn) toggleBtn.remove();
       restoreNativeBlocks();
       titleBlockRef = null;
-      customActive = true;
+      customActive = readBalanceMode();
       bootstrapped = false;
       bootstrapClicked = false;
       bootstrapGaveUp = false;
@@ -3278,6 +3342,14 @@
   // (titleBlockRef === null, y compris juste après un démontage/teardown
   // dans onNavigation ci-dessus).
   function scanBalance() {
+    window.TMBC.ensurePremiumMenuItem({
+      nativeId: 'menu-item-balance',
+      id: 'menu-item-balancePremium',
+      label: 'Balance Premium',
+      enabled: !isDisabled(),
+      onClick: switchToPremium,
+      onNativeClick: onNativeBalanceClick,
+    });
     if (isDisabled()) return;
     if (!titleBlockRef) return;
     checkNativeSubtype(titleBlockRef);

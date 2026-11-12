@@ -57,3 +57,40 @@ autre — fusionner dans le module du domaine concerné.
 3. Pousser : le zip publié est reconstruit automatiquement.
 4. Ne jamais modifier ni supprimer la clé `key` du manifest (elle fixe l'ID de l'extension et donc
    les réglages enregistrés chez les utilisateurs).
+
+## Annoncer une mise à jour aux utilisateurs
+
+Dans `publish.json` → `release` : changer `version` et écrire les `notes`. Au push, chaque
+utilisateur voit **une fois** la fenêtre « mise à jour activée » à son prochain chargement de
+MyUnisoft. Sans changement de `release.version`, la publication reste silencieuse (correctifs).
+
+Une mise à jour de la coquille (`extension/`, version du manifest) affiche aussi cette fenêtre,
+avec les notes de `EXTENSION_NOTES` dans `extension/config.js`.
+
+## Fonctionnalités par défaut
+
+`publish.json` → `catalog` : groupes et interrupteurs affichés dans l'extension. Un élément
+`"type": "module"` active/désactive un fichier de `scripts/` ; `"type": "setting"` est un réglage
+lu par les modules via `TMBC.feature('id', défaut)` (ou `ATM.settings.id`). `default` fixe la valeur
+pour tous les utilisateurs qui n'y ont pas touché. `required` = toujours chargés ;
+`dependencies` = modules chargés automatiquement avec un autre.
+
+## Licences (bloquer un client)
+
+```bash
+node tools/licence.mjs add "Cabinet Dupont"     # affiche la clé à transmettre (une seule fois)
+node tools/licence.mjs list
+node tools/licence.mjs block "Cabinet Dupont"   # suspend
+node tools/licence.mjs unblock "Cabinet Dupont" # réactive
+```
+
+Puis commit + push. Effet chez le client à la prochaine vérification de son extension (≤ 30 min,
+démarrage de Chrome, ou bouton « Vérifier ») : plus aucun module injecté, bandeau « licence
+suspendue » dans MyUnisoft, pastille **LIC** sur l'icône. Hors ligne, une licence déjà validée
+reste utilisable 14 jours (`LICENCE_GRACE_DAYS`). Seules les empreintes SHA-256 des clés sont
+dans le dépôt. `"licenceRequired": false` dans `publish.json` désactive le contrôle pour tous.
+
+**Limite** : tant que le dépôt est public, le code des modules reste lisible et l'extension
+installée en mode développeur peut être modifiée par un utilisateur averti. Le blocage arrête
+l'usage normal ; pour le rendre robuste, il faut servir les modules depuis un serveur qui vérifie
+la clé (dépôt privé + petit service, ex. Cloudflare Worker).

@@ -17,6 +17,8 @@ Durée : 3 minutes. Chrome à jour (version 120 minimum).
 4. Sur la carte « Atelier MyUnisoft », cliquer **Détails**, puis activer
    **Autoriser les scripts utilisateur**. *(Indispensable : sans ça, aucun module ne s'exécute.)*
 5. Cliquer sur l'icône puzzle 🧩 de Chrome et **épingler** Atelier MyUnisoft.
+6. Cliquer sur l'icône Atelier, saisir la **clé de licence** reçue (`ATM-XXXX-XXXX-XXXX`) puis
+   **Valider la clé**.
 
 ## 3. Vérifier
 
@@ -27,6 +29,7 @@ Durée : 3 minutes. Chrome à jour (version 120 minimum).
 |---|---|
 | *(aucune)* | Tout fonctionne. |
 | **!** rouge | « Autoriser les scripts utilisateur » n'est pas activé (étape 2.4). |
+| **LIC** rouge | Clé de licence absente, non reconnue ou suspendue. |
 | **?** orange | Les modules n'ont pas pu être téléchargés (réseau / VPN) — réessayer « Vérifier les mises à jour ». |
 | **EXT** orange | Une nouvelle version de l'extension elle-même est nécessaire — voir ci-dessous. |
 
@@ -37,9 +40,15 @@ Durée : 3 minutes. Chrome à jour (version 120 minimum).
 - **Extension** (rare, pastille **EXT**) : retélécharger le zip, l'extraire **par-dessus**
   `C:\AtelierMyUnisoft\extension`, puis dans `chrome://extensions` cliquer ↻ sur la carte.
 
-## Désactiver un module
+## Activer / désactiver une fonctionnalité
 
-Icône Atelier → interrupteur à côté du module → recharger l'onglet.
+Icône Atelier → interrupteur à côté de la fonctionnalité → recharger l'onglet.
+« Avancé » → « Réglages par défaut » revient aux réglages recommandés.
+
+## Après une mise à jour
+
+Une fenêtre « Atelier MyUnisoft — mise à jour activée » s'ouvre une fois dans MyUnisoft
+et résume les nouveautés.
 
 ## Remarque
 

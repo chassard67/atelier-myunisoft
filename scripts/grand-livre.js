@@ -1,8 +1,13 @@
 // ==UserScript==
 // @name         MyUnisoft - Grand livre à l'écran
 // @namespace    https://nicolas.chassard/myunisoft
-// @version      1.16-ext
-// @description  v1.16 (2026-11-12) : PORTAGE EXTENSION CHROME « Atelier MyUnisoft » — aucun changement fonctionnel, le module tourne désormais dans l'extension (même contexte de page que le preload).
+// @version      1.17-ext
+// @description  v1.17 (2026-11-12, demandé par Nicolas) : nouvelle entrée « Grand Livre Premium » dans le menu Tenue, juste
+//               sous « Grand livre ». « Grand livre » = page native stricte (plus de bouton « Afficher à l'écran ») ;
+//               « Grand Livre Premium » = même page avec le bouton. Mode mémorisé par onglet (sessionStorage
+//               tmbcLedgerMode). Fonctionnalité activable dans l'extension (réglage glPremium) ; le module reste chargé
+//               dans tous les cas car Consultation Premium utilise window.TMBC_GL.
+//               v1.16 (2026-11-12) : PORTAGE EXTENSION CHROME « Atelier MyUnisoft » — aucun changement fonctionnel, le module tourne désormais dans l'extension (même contexte de page que le preload).
 //               v1.14 (2026-10-30) : openEntry (Consultation Premium) repère la ligne des résultats par date + montant (+ journal) sans exiger le n° de compte, puis double-clique pour ouvrir l'écriture dans la saisie.
 //               v1.13 (2026-10-30) : loadAccountList expose le solde du compte (exercice_values[0] de la balance, comme balance.js) dans nums.solde.
 //               v1.12 (2026-10-30) : loadAccountList garde aussi les champs numériques stockés en texte (soldes affichés dans le menu Compte de Consultation Premium).
@@ -771,8 +776,65 @@
     }
   }
 
+  // (v1.17, 2026-11-12) « Grand livre » (menu Tenue) = page native stricte ;
+  // « Grand Livre Premium » (nouvelle entrée juste en dessous) = même page avec
+  // le bouton « Afficher à l'écran ». Mode mémorisé par onglet (sessionStorage),
+  // fonctionnalité activable dans l'extension (réglage glPremium). Les Journaux
+  // gardent leur bouton dès que la fonctionnalité est active. Le module reste
+  // chargé même désactivé : Consultation Premium utilise window.TMBC_GL.
+  const LEDGER_MODE_KEY = 'tmbcLedgerMode';
+  const LEDGER_PATH_RE = /\/current-editions\/ledger(\/|\?|$)/;
+  const glFeatureOn = () => (window.TMBC.feature ? window.TMBC.feature('glPremium', true) : true);
+  function ledgerPremiumMode() {
+    try {
+      return sessionStorage.getItem(LEDGER_MODE_KEY) === 'premium';
+    } catch (e) {
+      return false;
+    }
+  }
+  function writeLedgerMode(premium) {
+    try {
+      sessionStorage.setItem(LEDGER_MODE_KEY, premium ? 'premium' : 'native');
+    } catch (e) {
+      /* ignore */
+    }
+  }
+  // Bouton « Afficher à l'écran » autorisé ici ? (Grand livre : seulement en
+  // mode Premium ; Journaux : dès que la fonctionnalité est active.)
+  function premiumButtonsAllowed() {
+    if (isDisabled() || !glFeatureOn()) return false;
+    if (LEDGER_PATH_RE.test(location.pathname)) return ledgerPremiumMode();
+    return true;
+  }
+
+  let programmaticLedgerClick = false;
+  function scanLedgerMenu() {
+    if (!window.TMBC.ensurePremiumMenuItem) return;
+    window.TMBC.ensurePremiumMenuItem({
+      nativeId: 'menu-item-ledger',
+      id: 'menu-item-ledgerPremium',
+      label: 'Grand Livre Premium',
+      enabled: !isDisabled() && glFeatureOn(),
+      onNativeClick: () => {
+        if (!programmaticLedgerClick) writeLedgerMode(false);
+      },
+      onClick: (nativeLi) => {
+        writeLedgerMode(true);
+        programmaticLedgerClick = true;
+        try {
+          nativeLi.click(); // navigation native (ou simple fermeture du menu si déjà sur la page)
+        } finally {
+          programmaticLedgerClick = false;
+        }
+      },
+    });
+  }
+
   function scanGrandLivre() {
-    if (isDisabled()) return;
+    if (!premiumButtonsAllowed()) {
+      document.querySelectorAll('[' + BTN_ATTR + ']').forEach((b) => b.remove());
+      return;
+    }
     const dlgs = document.querySelectorAll('[role=dialog]');
     dlgs.forEach((dlg) => {
       const h = dlg.querySelector('h1,h2,h3,h6,[class*=Title]');
@@ -847,7 +909,7 @@
 
   function scanPageButton() {
     let btn = document.getElementById(PAGE_BTN_ID);
-    const onLedger = !isDisabled() && /\/current-editions\/(ledger|currentEditionDiary)/.test(location.pathname);
+    const onLedger = premiumButtonsAllowed() && /\/current-editions\/(ledger|currentEditionDiary)/.test(location.pathname);
     const popupOpen = !!document.querySelector('.MuiPopover-root,.MuiMenu-root,.MuiModal-root,[role=dialog]');
     if (!onLedger) { if (btn) btn.remove(); return; }
     const kebab = findKebabButton();
@@ -986,6 +1048,7 @@
     },
   };
 
+  registerScan(scanLedgerMenu);
   registerScan(scanGrandLivre);
   registerScan(scanPageButton);
 })();

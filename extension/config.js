@@ -1,26 +1,44 @@
-// Réglages par défaut de l'extension. Chaque utilisateur peut les surcharger
-// depuis la fenêtre de l'extension (section « Avancé ») ; la surcharge est
-// stockée dans chrome.storage.local sous la clé "cfg".
+// Réglages par défaut de l'extension. Les choix de l'utilisateur (fenêtre de
+// l'extension) sont stockés dans chrome.storage.local sous la clé "cfg" et
+// ne contiennent que ce qu'il a modifié (le reste suit les valeurs par défaut
+// publiées, qui peuvent donc évoluer sans réinstaller l'extension).
 
 export const DEFAULTS = {
-  // Adresse où sont publiés les modules (dossier "dist" du dépôt, publié par
-  // GitHub Pages). DOIT se terminer par "/".
   // Adresse GitHub Pages par défaut ; à remplacer par le domaine perso
   // (ex. https://atelier.mondomaine.fr/) une fois le CNAME configuré.
   baseUrl: 'https://chassard67.github.io/atelier-myunisoft/',
 
-  // Intervalle de vérification automatique des mises à jour (minutes).
+  // Intervalle de vérification automatique (mises à jour + licence), minutes.
   checkIntervalMin: 30,
 
-  // Modules désactivés par l'utilisateur (ids). Vide = tout actif.
-  disabled: [],
+  // Clé de licence saisie par l'utilisateur.
+  licenceKey: '',
 
-  // Réglages transmis aux modules (lisibles via ATM.settings dans la page).
-  settings: {
-    // Contenu centré à 60vw sur écran >= 1920px (comportement Electron).
-    // false = contenu aligné à gauche (comportement Tampermonkey d'origine).
-    centerLayout: true,
-    // Fenêtre de consultation (…/child/consulting) agrandie automatiquement.
-    maximizeConsultWindow: true,
-  },
+  // Choix de l'utilisateur, par id : { "balance": false, ... } — vide = défauts.
+  modules: {},
+  settings: {},
+};
+
+// Valeurs de repli des réglages si la publication ne les définit pas (le
+// catalogue publié dans manifest.json fait foi).
+export const FALLBACK_SETTINGS = {
+  centerLayout: true,
+  gridLines: true,
+  monoFont: true,
+  showStatus: false,
+  glPremium: true,
+  maximizeConsultWindow: true,
+};
+
+// Une licence validée reste utilisable hors ligne pendant ce délai (serveur
+// de publication injoignable) ; au-delà, les modules sont désactivés.
+export const LICENCE_GRACE_DAYS = 14;
+
+// Notes affichées aux utilisateurs quand la COQUILLE elle-même est mise à jour.
+export const EXTENSION_NOTES = {
+  '1.1.0': [
+    'Fonctionnalités activables une à une depuis l\'icône de l\'extension.',
+    'Licence d\'utilisation (clé à saisir dans l\'extension).',
+    'Fenêtre d\'information à chaque mise à jour.',
+  ],
 };

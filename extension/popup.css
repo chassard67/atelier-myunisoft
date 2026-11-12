@@ -37,3 +37,9 @@ ol { margin: 6px 0 8px; padding-left: 18px; }
 .switch span::before { content: ""; position: absolute; width: 13px; height: 13px; left: 2px; top: 2px; background: #fff; border-radius: 50%; transition: .15s; }
 .switch input:checked + span { background: var(--green); }
 .switch input:checked + span::before { transform: translateX(13px); }
+.group { border: 1px solid var(--line); border-radius: 6px; margin: 6px 0; padding: 4px 8px; }
+.group > summary { font-weight: 600; color: var(--navy); padding: 3px 0; }
+label.feature { display: flex; align-items: center; gap: 8px; padding: 5px 0; border-top: 1px dashed var(--line); cursor: pointer; }
+label.feature .name { flex: 1; }
+label.feature input:disabled + span { opacity: .55; cursor: default; }
+section#licence-box { background: #f9fafb; }

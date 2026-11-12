@@ -1,8 +1,13 @@
 // ==UserScript==
 // @name         MyUnisoft - Premium (core)
 // @namespace    https://nicolas.chassard/myunisoft
-// @version      4.13-ext
-// @description  v4.13 (2026-11-12) : PORTAGE EXTENSION CHROME « Atelier MyUnisoft » — fetchStatusColor passe par ATM.call('meteo-status') (au lieu de l'IPC) ; isElectron = réglage « Centrer le contenu » de l'extension (ATM.settings.centerLayout) ; isConsultWindow ne dépend plus d'Electron ; Ctrl+molette laissé au zoom natif de Chrome (webFrame absent) ; zoom 90 % par défaut via ATM.setZoom (zoom de l'onglet) ; diagnostic Ctrl+Alt+D téléchargé en diag-N.txt (ATM.diag).
+// @version      4.14-ext
+// @description  v4.14 (2026-11-12, demandes de Nicolas) : (1) bouton PREMIUM de la barre du haut supprimé (activation
+//               fonctionnalité par fonctionnalité dans l'extension) et ancien drapeau tmbc-scripts-disabled effacé ;
+//               (2) réglages de l'extension lus via feature() : lignes de séparation des tableaux (gridLines), chiffres
+//               en Consolas (monoFont), statut MyUnisoft/météo (showStatus, désactivé par défaut) ; (3) nouvel utilitaire
+//               partagé TMBC.ensurePremiumMenuItem() (entrée « XXX Premium » clonée sous une entrée native du menu).
+//               v4.13 (2026-11-12) : PORTAGE EXTENSION CHROME « Atelier MyUnisoft » — fetchStatusColor passe par ATM.call('meteo-status') (au lieu de l'IPC) ; isElectron = réglage « Centrer le contenu » de l'extension (ATM.settings.centerLayout) ; isConsultWindow ne dépend plus d'Electron ; Ctrl+molette laissé au zoom natif de Chrome (webFrame absent) ; zoom 90 % par défaut via ATM.setZoom (zoom de l'onglet) ; diagnostic Ctrl+Alt+D téléchargé en diag-N.txt (ATM.diag).
 //               v4.8 (2026-10-22) : cause réelle de MyU Vision décalé/tronqué trouvée par diagnostic en direct dans l'appli : c'est un custom element <myu-vision-chat> à shadow DOM, placé dans le papier du menu de gauche ; le translateX appliqué au menu (centrage 60vw) devient le bloc conteneur de son panneau position:fixed et overflow:hidden le rogne. Détection corrigée (shadowRoot > [role=dialog] non aria-hidden, largeur > 50) : tant que le panneau est ouvert, le menu n'est plus translaté. Diagnostic temporaire retiré (sauvegarde : *.bak-diag-version).
 //               v4.7 (2026-10-22) : correctif v4.6 insuffisant — MyU Vision n'est pas un MuiDrawer mais un <div role="dialog" aria-label="MyU Vision"> (HTML fourni par Nicolas). Détecté désormais directement (aria-hidden="false", ou tout role="dialog" dans le menu) : tant qu'il est ouvert, le menu n'est plus translaté (hypothèse : le dialogue, rendu dans le menu, était décalé et rogné par ce translateX) et la mise en page native est rendue (classe html.tmbc-side-panel-open).
 //               v4.6 (2026-10-22) : MyU Vision (panneau latéral natif = 2e MuiDrawer docké) s'affichait à gauche, tronqué, avec le centrage à 60vw sur écran large (OK en mode pleine largeur). positionDrawerNextToContent() cible désormais le drawer du menu (getSidebar().closest) au lieu du premier drawer docké, et quand un autre drawer docké a une largeur > 8px pose la classe html.tmbc-side-panel-open qui rend la mise en page au natif (CSS dans ULTRAWIDE_STYLE) et retire le décalage du menu ; log console "[side-panel] ouvert/fermé" pour diagnostic. Sauvegarde : premium.js.bak-pre-sidepanel.
@@ -123,8 +128,66 @@
   const DEFAULT_MENU_COLOR = 'rgb(23, 42, 70)';
 
 
+  // (2026-11-12, v4.14) Le bouton PREMIUM de la barre du haut est supprimé :
+  // chaque fonctionnalité s'active/désactive désormais dans l'extension. On
+  // efface un éventuel ancien drapeau « désactivé » (posé par ce bouton) qui
+  // bloquerait sinon tout, sans plus aucun moyen de le réactiver.
+  try {
+    localStorage.removeItem(FLAG_KEY);
+  } catch (e) {
+    /* stockage indisponible */
+  }
+
   function isDisabled() {
     return localStorage.getItem(FLAG_KEY) === '1';
+  }
+
+  // Réglages de l'extension (fenêtre de l'icône Atelier) : true/false par
+  // fonctionnalité ; def = valeur si le réglage n'est pas publié.
+  const ATM_SETTINGS = (window.ATM && window.ATM.settings) || {};
+  function feature(key, def) {
+    return key in ATM_SETTINGS ? !!ATM_SETTINGS[key] : def;
+  }
+
+  // Entrée « XXX Premium » ajoutée juste sous une entrée native du méga-menu
+  // (clone de l'entrée native, nouveau nœud : rien de natif déplacé). Même
+  // technique que Consultation Premium. onClick reçoit nativeLi, pour pouvoir
+  // déclencher la navigation native après avoir posé un mode.
+  function premiumMenuDossierOpen() {
+    const m = /^\/tab\/(\d+)\//.exec(location.pathname);
+    return !!(m && m[1] !== '0');
+  }
+  function closeNativeMegaMenu() {
+    const dlg = document.querySelector('.MuiDialog-root:has(.dialogContainer__menu)') || document.querySelector('[role=dialog]');
+    if (!dlg) return;
+    dlg.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', keyCode: 27, bubbles: true, cancelable: true }));
+  }
+  function ensurePremiumMenuItem({ nativeId, id, label, onClick, onNativeClick, enabled }) {
+    const existing = document.querySelector('li[data-id="' + id + '"]');
+    if (!enabled || !premiumMenuDossierOpen()) {
+      if (existing) existing.remove();
+      return;
+    }
+    const nativeLi = document.querySelector('li[data-id="' + nativeId + '"]');
+    if (!nativeLi) return;
+    if (onNativeClick && !nativeLi.dataset.tmbcPremiumHooked) {
+      nativeLi.dataset.tmbcPremiumHooked = '1';
+      nativeLi.addEventListener('click', () => onNativeClick(), true);
+    }
+    if (existing) return;
+    const li = nativeLi.cloneNode(true);
+    li.setAttribute('data-id', id);
+    li.removeAttribute('aria-selected');
+    li.classList.remove('Mui-selected');
+    delete li.dataset.tmbcPremiumHooked;
+    const span = li.querySelector('span');
+    if (span) span.textContent = label;
+    li.addEventListener('click', (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      onClick(nativeLi);
+    });
+    nativeLi.parentElement.insertBefore(li, nativeLi.nextSibling);
   }
 
 
@@ -869,6 +932,7 @@
     const style = document.createElement('style');
     style.id = STYLE_ID;
     style.textContent = `
+      ${feature('gridLines', true) ? `
       table:not(.tmb-table) td, table:not(.tmb-table) th,
       .bodyRow > div, [class*="headerCell"]:not([class*="Content"]) {
         border-right: 1px solid #d9dee5 !important;
@@ -899,7 +963,9 @@
         padding-left: 6px !important;
         padding-right: 6px !important;
       }
+      ` : ''}
 
+      ${feature('monoFont', true) ? `
       .tmbc-numeric {
         font-family: Consolas, "Courier New", monospace !important;
         font-variant-numeric: tabular-nums;
@@ -908,6 +974,7 @@
         font-family: Consolas, "Courier New", monospace !important;
         font-variant-numeric: tabular-nums;
       }
+      ` : ''}
 
       /* En-têtes de colonnes sur 2 lignes plutôt que tronqués avec "..."
          (ex. "Référence dossier", "Expert comptable") — la grille native
@@ -1888,15 +1955,20 @@
     getApiHeaders,
     registerScan,
     extendDebugHook,
+    feature,
+    ensurePremiumMenuItem,
   });
 
   function scan() {
     // --- Toujours actif, indépendamment du bouton Premium (comportement
     // préexistant conservé à l'identique depuis premium.js 3.31) ---------
-    scanPremiumButton();
+    // (2026-11-12) plus de bouton PREMIUM (scanPremiumButton retiré) ; le
+    // statut MyUnisoft (météo) n'est affiché que si activé dans l'extension.
     exposeDebugHook();
-    injectMeteoButton();
-    createMeteoModal();
+    if (feature('showStatus', false)) {
+      injectMeteoButton();
+      createMeteoModal();
+    }
     positionDrawerNextToContent();
     installDiagKey();
     mountScrollTopButton();

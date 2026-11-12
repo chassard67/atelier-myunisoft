@@ -1,5 +1,16 @@
 {
-  "minExtensionVersion": "1.0.0",
+  "minExtensionVersion": "1.1.0",
+  "licenceRequired": true,
+  "release": {
+    "version": "1.1.0",
+    "date": "2026-11-12",
+    "notes": [
+      "Nouvelles entrées de menu (Tenue) : « Balance Premium » sous Balance, « Grand Livre Premium » sous Grand livre, « Consultation Premium » sous Consultation.",
+      "Chaque fonctionnalité s'active ou se désactive depuis l'icône de l'extension (barre de Chrome).",
+      "Le bouton PREMIUM de la barre du haut est supprimé ; le statut MyUnisoft (météo) est désactivé par défaut.",
+      "Dossier de révision : les cycles s'affichent en pastilles dès l'onglet « Tableau de bord »."
+    ]
+  },
   "defaultMatches": ["https://connect.lgassocies.com/*", "https://*.myunisoft.fr/*"],
   "order": [
     "socle",
@@ -16,6 +27,51 @@
     "consult-filtre",
     "consult-premium"
   ],
-  "required": ["socle", "premium"],
+  "required": ["socle", "premium", "grand-livre"],
+  "dependencies": {
+    "consult-premium": ["grand-livre"],
+    "consult-filtre": ["grand-livre"]
+  },
+  "catalog": [
+    {
+      "group": "Affichage Premium",
+      "items": [
+        { "type": "setting", "id": "centerLayout", "label": "Centrage du contenu sur grand écran", "default": true },
+        { "type": "setting", "id": "gridLines", "label": "Lignes de séparation dans les tableaux", "default": true },
+        { "type": "setting", "id": "monoFont", "label": "Chiffres en police à chasse fixe (Consolas)", "default": true },
+        { "type": "module", "id": "revision", "label": "Dossier de révision : cycles en pastilles", "default": true },
+        { "type": "module", "id": "solde-comptes", "label": "Solde des comptes dans la recherche de compte", "default": true },
+        { "type": "setting", "id": "showStatus", "label": "Statut MyUnisoft (météo) dans le menu", "default": false }
+      ]
+    },
+    {
+      "group": "Balance Premium",
+      "items": [{ "type": "module", "id": "balance", "label": "Balance Premium (menu Tenue, sous Balance)", "default": true }]
+    },
+    {
+      "group": "Grand Livre Premium",
+      "items": [{ "type": "setting", "id": "glPremium", "label": "Grand Livre Premium (menu Tenue, sous Grand livre)", "default": true }]
+    },
+    {
+      "group": "Consultation Premium",
+      "items": [{ "type": "module", "id": "consult-premium", "label": "Consultation Premium (menu Tenue, sous Consultation)", "default": true }]
+    },
+    {
+      "group": "Fenêtres",
+      "items": [{ "type": "setting", "id": "maximizeConsultWindow", "label": "Agrandir les fenêtres popup (consultation, MyU Vision…)", "default": true }]
+    },
+    {
+      "group": "Autres modules (désactivés par défaut)",
+      "collapsed": true,
+      "items": [
+        { "type": "module", "id": "menus", "label": "Menu latéral (icône active, infobulles, Écosystème)", "default": false },
+        { "type": "module", "id": "consultation", "label": "Fenêtre de consultation scindée 50/50", "default": false },
+        { "type": "module", "id": "suivi-semaine", "label": "Suivi de vos sociétés (Semaine)", "default": false },
+        { "type": "module", "id": "saisie", "label": "Saisie (nouvelle écriture)", "default": false },
+        { "type": "module", "id": "saisie-premium", "label": "Saisie Premium", "default": false },
+        { "type": "module", "id": "consult-filtre", "label": "Consultation : filtre de comptes non lettrés", "default": false }
+      ]
+    }
+  ],
   "connect": []
 }
