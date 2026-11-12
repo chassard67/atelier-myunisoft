@@ -174,11 +174,24 @@ async function addNotice(notice) {
 // Téléchargement des modules
 // ---------------------------------------------------------------------------
 
+// Deux nouvelles tentatives (3 s puis 10 s) en cas d'échec réseau ou de
+// réponse serveur en erreur : pendant une republication GitHub Pages, le
+// serveur renvoie brièvement des erreurs (vu en direct : « Failed to fetch »).
 async function fetchText(url) {
   const sep = url.includes('?') ? '&' : '?';
-  const res = await fetch(url + sep + 't=' + Date.now(), { cache: 'no-store' });
-  if (!res.ok) throw new Error(`HTTP ${res.status} sur ${url}`);
-  return res.text();
+  let lastErr;
+  for (const wait of [0, 3000, 10000]) {
+    if (wait) await new Promise((r) => setTimeout(r, wait));
+    try {
+      const res = await fetch(url + sep + 't=' + Date.now(), { cache: 'no-store' });
+      if (res.ok) return res.text();
+      lastErr = new Error(`HTTP ${res.status} sur ${url}`);
+      if (res.status === 404 && !/manifest\.json|licences\.json/.test(url)) break;
+    } catch (e) {
+      lastErr = new Error(`${e.message} (${url.replace(/\?.*$/, '')})`);
+    }
+  }
+  throw lastErr;
 }
 
 async function getCachedCode(file) {
