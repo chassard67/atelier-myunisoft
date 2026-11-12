@@ -7,6 +7,7 @@
 //               pilules n'était donc construite qu'après un passage par un cycle. Elle est maintenant construite dès que la rangée de
 //               cycles est présente (insérée avant le bloc qui la contient) ; boutons Synthese/Contrôles affichés seulement si le
 //               sélecteur Section existe. Sélecteurs dadpContainer/filters rendus tolérants (suffixe stable, sans préfixe css-xxxx).
+//               Rangées natives masquées marquées (data-tmbc-rev-hidden) pour être retrouvées même masquées.
 //               v1.4 (2026-11-12) : PORTAGE EXTENSION CHROME « Atelier MyUnisoft » — aucun changement fonctionnel, le module tourne désormais dans l'extension (même contexte de page que le preload).
 //               v1.3 (2026-08-01) : BUG TROUVÉ EN DIRECT — impossible de passer de Synthese à
 //               Contrôles (le bouton ne faisait rien). Cause : chooseSection() ouvrait le menu
@@ -250,10 +251,24 @@
     return label ? label.closest('.MuiFormControl-root') : null;
   }
 
+  // (v1.5) Un onglet est « visible » s'il est affiché OU s'il appartient à une
+  // rangée que NOUS avons masquée (marqueur data-tmbc-rev-hidden) : sinon une
+  // rangée masquée puis ré-utilisée par React n'était plus retrouvée.
+  const HIDDEN_MARK = 'data-tmbc-rev-hidden';
   function findVisibleTabByText(text) {
     return Array.from(document.querySelectorAll('[role="tab"]')).find(
-      (t) => t.offsetParent !== null && normalizeColumnName(t.textContent.trim()) === normalizeColumnName(text)
+      (t) =>
+        (t.offsetParent !== null || !!t.closest('[' + HIDDEN_MARK + ']')) &&
+        normalizeColumnName(t.textContent.trim()) === normalizeColumnName(text)
     );
+  }
+  function hideNative(el) {
+    el.setAttribute(HIDDEN_MARK, '1');
+    el.style.setProperty('display', 'none', 'important');
+  }
+  function showNative(el) {
+    el.removeAttribute(HIDDEN_MARK);
+    el.style.removeProperty('display');
   }
 
   // (Bug vécu en direct le 2026-08-01) : findVisibleTabByText filtre sur
@@ -333,11 +348,11 @@
     const toolbar = document.getElementById(REVISION_TOOLBAR_ID);
     if (toolbar) toolbar.remove();
     const sectionFormControl = findSectionFormControl();
-    if (sectionFormControl) sectionFormControl.style.removeProperty('display');
+    if (sectionFormControl) showNative(sectionFormControl);
     const cycleTabsRoot = findCycleTabsRoot();
-    if (cycleTabsRoot) cycleTabsRoot.style.removeProperty('display');
+    if (cycleTabsRoot) showNative(cycleTabsRoot);
     const subTabsRoot = findSubTabsRoot();
-    if (subTabsRoot) subTabsRoot.style.removeProperty('display');
+    if (subTabsRoot) showNative(subTabsRoot);
     lastRevisionToolbarSignature = null;
     cachedCycleTabsRoot = null;
     cachedSubTabsRoot = null;
@@ -395,9 +410,9 @@
 
     // Masquage des blocs natifs remplacés — jamais supprimés, cf. règle du
     // projet (uniquement display:none sur les blocs remplacés).
-    if (sectionFormControl) sectionFormControl.style.setProperty('display', 'none', 'important');
-    if (cycleTabsRoot) cycleTabsRoot.style.setProperty('display', 'none', 'important');
-    if (subTabsRoot) subTabsRoot.style.setProperty('display', 'none', 'important');
+    if (sectionFormControl) hideNative(sectionFormControl);
+    if (cycleTabsRoot) hideNative(cycleTabsRoot);
+    if (subTabsRoot) hideNative(subTabsRoot);
 
     if (!toolbar) {
       toolbar = document.createElement('div');
