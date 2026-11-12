@@ -1,8 +1,10 @@
 // ==UserScript==
 // @name         MyUnisoft - Consultation Premium (page de consultation de compte maison)
 // @namespace    https://nicolas.chassard/myunisoft
-// @version      2.10-ext
-// @description  v2.10 (2026-11-12) : PORTAGE EXTENSION CHROME « Atelier MyUnisoft » — diagnostic téléchargé en diag-N.txt (ATM.diag) au lieu de l'IPC Electron.
+// @version      2.11-ext
+// @description  v2.11 (2026-11-12, demandé par Nicolas) : colonne Lettrage placée entre Débit et Crédit (ordre par défaut ;
+//               un ordre de colonnes déjà mémorisé est migré une fois, les déplacements faits ensuite restent respectés).
+//               v2.10 (2026-11-12) : PORTAGE EXTENSION CHROME « Atelier MyUnisoft » — diagnostic téléchargé en diag-N.txt (ATM.diag) au lieu de l'IPC Electron.
 //               v2.9 (2026-10-30, retours de Nicolas) : (1) ajustement automatique des colonnes : largeurs désormais MESURÉES dans le DOM (vrais styles des cellules, signe « - » et espaces des milliers compris) au lieu d'une estimation, avec marge ; (2) code journal (et lettrage, pièce, libellé, saisi par) traités comme du texte : un autre script de l'appli reformatait les valeurs 100 % numériques (ex. journal « 99 ») en chiffres alignés à droite -> séparateur invisible ajouté.
 //               v2.8 (2026-10-30, demandé par Nicolas) : sélection à la souris : un clic sur une ligne la coche (et décoche les autres) ; Ctrl+clic ajoute/retire une ligne ; Maj+clic coche toutes les lignes entre la dernière ligne cliquée et celle-ci (Ctrl+Maj+clic : les ajoute à la sélection) ; Maj+clic sur une case à cocher fait de même.
 //               v2.7 (2026-10-30, demandé par Nicolas) : période par défaut = exercice N (celui qui contient aujourd'hui) + N+1 s'il existe, sans N-1 : exercices lus par GET /exercices?society_id= (appel natif relevé, réponse lue de façon tolérante) ; repli sur l'année civile en cours. La dernière période utilisée n'est plus réappliquée à l'ouverture.
@@ -611,8 +613,9 @@
   // ------------------------------------------------------------------
   const COLS = [
     { k: 'chk', w: 34 }, { k: 'date', w: 96, t: 'Date', sort: 'date' }, { k: 'jnl', w: 70, t: 'Journal', sort: 'jnl' },
-    { k: 'lett', w: 78, t: 'Lettrage', sort: 'lett' }, { k: 'lib', w: 300, t: 'Libellé', sort: 'lib' },
-    { k: 'deb', w: 112, t: 'Débit', sort: 'd', num: true }, { k: 'cre', w: 112, t: 'Crédit', sort: 'c', num: true },
+    { k: 'lib', w: 300, t: 'Libellé', sort: 'lib' },
+    // (v2.11) Lettrage entre Débit et Crédit (demande de Nicolas).
+    { k: 'deb', w: 112, t: 'Débit', sort: 'd', num: true }, { k: 'lett', w: 78, t: 'Lettrage', sort: 'lett' }, { k: 'cre', w: 112, t: 'Crédit', sort: 'c', num: true },
     { k: 'solde', w: 120, t: 'Solde', sort: 'solde', num: true }, { k: 'ms', w: 124, t: 'Montant signé', sort: 'ms', num: true }, { k: 'piece', w: 130, t: 'Pièce', sort: 'piece' }, { k: 'cpttc', w: 104, t: 'Compte TTC', sort: 'cpttc' }, { k: 'cpht', w: 104, t: 'Compte HT', sort: 'cpht' }, { k: 'cptva', w: 104, t: 'Compte TVA', sort: 'cptva' },
     { k: 'pj', w: 54, t: 'PJ' }, { k: 'ech', w: 98, t: 'Échéance', sort: 'ech' }, { k: 'com', w: 230, t: 'Commentaire', sort: 'com' },
     { k: 'who', w: 130, t: 'Saisi par', sort: 'who' },
@@ -622,6 +625,17 @@
     try {
       const o = JSON.parse(localStorage.getItem(COLORD_KEY) || '[]');
       if (!Array.isArray(o) || !o.length) return;
+      // (v2.11) Migration unique d'un ordre déjà mémorisé : Lettrage replacé
+      // entre Débit et Crédit ; un déplacement fait ensuite à la souris reste respecté.
+      if (!localStorage.getItem(COLORD_KEY + '|lettMoved')) {
+        localStorage.setItem(COLORD_KEY + '|lettMoved', '1');
+        const li = o.indexOf('lett');
+        if (li >= 0 && o.includes('deb')) {
+          o.splice(li, 1);
+          o.splice(o.indexOf('deb') + 1, 0, 'lett');
+          localStorage.setItem(COLORD_KEY, JSON.stringify(o));
+        }
+      }
       const rank = (k) => { const i = o.indexOf(k); return i < 0 ? 999 : i; };
       const base = COLS.slice();
       const sorted = base.filter((c) => c.k !== 'chk').sort((a, b) => (rank(a.k) - rank(b.k)) || (base.indexOf(a) - base.indexOf(b)));
