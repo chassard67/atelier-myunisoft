@@ -1,4 +1,21 @@
 {
   "minExtensionVersion": "1.0.0",
+  "defaultMatches": ["https://connect.lgassocies.com/*", "https://*.myunisoft.fr/*"],
+  "order": [
+    "socle",
+    "premium",
+    "balance",
+    "menus",
+    "revision",
+    "consultation",
+    "suivi-semaine",
+    "saisie",
+    "saisie-premium",
+    "solde-comptes",
+    "grand-livre",
+    "consult-filtre",
+    "consult-premium"
+  ],
+  "required": ["socle", "premium"],
   "connect": []
 }

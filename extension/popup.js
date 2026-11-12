@@ -95,7 +95,11 @@ async function render() {
       sw.title = 'Activer / désactiver ce module';
       const input = document.createElement('input');
       input.type = 'checkbox';
-      input.checked = !cfg.disabled.includes(s.id);
+      input.checked = s.required || !cfg.disabled.includes(s.id);
+      if (s.required) {
+        input.disabled = true;
+        sw.title = 'Module indispensable (utilisé par les autres)';
+      }
       input.addEventListener('change', async () => {
         const fresh = (await send('status')).cfg.disabled.filter((x) => x !== s.id);
         if (!input.checked) fresh.push(s.id);

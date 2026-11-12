@@ -15,7 +15,7 @@ for (const d of dirs) {
     const p = path.join(ROOT, d, f);
     try {
       execFileSync(process.execPath, ['--check', p], { stdio: 'pipe' });
-      if (d === 'scripts') parseHeader(fs.readFileSync(p, 'utf8'), f);
+      if (d === 'scripts') parseHeader(fs.readFileSync(p, 'utf8'), f, { matches: ['https://example.com/*'] });
       console.log('  ok  ', path.join(d, f));
     } catch (e) {
       failed++;

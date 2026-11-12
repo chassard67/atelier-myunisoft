@@ -184,24 +184,33 @@ async function applyRegistrations() {
       settings: cfg.settings,
     })};\n`;
 
-  const registrations = [];
+  // UN SEUL enregistrement contenant tous les modules actifs, dans l'ordre de
+  // publication (= ordre de require() du preload Electron) : les modules
+  // partagent window.TMBC défini par premium.js, il doit donc être exécuté
+  // avant les autres — un ordre que Chrome ne garantit PAS entre deux
+  // enregistrements distincts. document_start comme le preload : balance.js
+  // doit patcher fetch/XHR avant l'appli ; les autres modules diffèrent
+  // eux-mêmes leur travail à DOMContentLoaded / scan().
+  const js = [{ code: preamble + runtime.code + `\n//# sourceURL=atelier-myunisoft/${manifest.runtime.file}` }];
+  const matches = new Set();
   for (const s of manifest.scripts) {
-    if (cfg.disabled.includes(s.id)) continue;
+    if (cfg.disabled.includes(s.id) && !s.required) continue;
     const cached = await getCachedCode(s.file);
     if (!cached) continue;
-    registrations.push({
-      id: 'atm-' + s.id,
-      matches: s.matches,
-      excludeMatches: s.excludeMatches && s.excludeMatches.length ? s.excludeMatches : undefined,
-      runAt: RUN_AT[s.runAt] || 'document_idle',
-      world: 'MAIN',
-      allFrames: false, // jamais dans les iframes (équivalent @noframes)
-      js: [
-        { code: preamble + runtime.code + `\n//# sourceURL=atelier-myunisoft/${manifest.runtime.file}` },
-        { code: cached.code + `\n//# sourceURL=atelier-myunisoft/${s.file}` },
-      ],
+    s.matches.forEach((m) => matches.add(m));
+    // Garde-fou par module : une erreur au chargement d'un module n'empêche
+    // pas les suivants de se charger (même logique que le try/catch par
+    // module de scan() dans premium.js).
+    js.push({
+      code:
+        `try {\n${cached.code}\n} catch (e) { console.error('[Atelier] erreur au chargement du module ${s.id}', e); }` +
+        `\n//# sourceURL=atelier-myunisoft/${s.file}`,
     });
   }
+  const registrations =
+    js.length > 1
+      ? [{ id: 'atm-bundle', matches: [...matches], runAt: 'document_start', world: 'MAIN', allFrames: false, js }]
+      : [];
   if (registrations.length) await chrome.userScripts.register(registrations);
   return { ok: true, count: registrations.length };
 }
@@ -297,14 +306,29 @@ const PAGE_HANDLERS = {
   'store-get': ({ key }) => storeGet(key),
   'store-set': ({ key, value }) => storeSet(key, value),
   ping: () => ({ extVersion: EXT_VERSION }),
+  // Ex-webFrame.setZoomFactor d'Electron : zoom propre à l'onglet (ne touche
+  // pas les autres onglets MyUnisoft ni le zoom mémorisé par Chrome pour le site).
+  'set-zoom': async ({ factor }, sender) => {
+    const f = Number(factor);
+    if (!sender.tab || !(f >= 0.25 && f <= 5)) throw new Error('zoom invalide');
+    await chrome.tabs.setZoomSettings(sender.tab.id, { mode: 'automatic', scope: 'per-tab' });
+    await chrome.tabs.setZoom(sender.tab.id, f);
+    return true;
+  },
 };
 
 // ---------------------------------------------------------------------------
-// Fenêtre de consultation (ex-setWindowOpenHandler de main.js)
+// Fenêtres popup (ex-setWindowOpenHandler de main.js)
 // ---------------------------------------------------------------------------
+// Electron ouvrait TOUTES les popups de l'appli (consultation, MyU Vision...)
+// sur toute la zone de travail. Ici : toute fenêtre de type popup qui charge
+// une page MyUnisoft est agrandie une fois, à son ouverture. La réutilisation
+// de la fenêtre de consultation est assurée nativement par window.open(url,
+// 'nom') côté balance.js (fenêtre nommée).
+const APP_URL_RE = /^https:\/\/(connect\.lgassocies\.com|[^/]*\.myunisoft\.fr)\//;
 
 chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
-  if (!changeInfo.url || !changeInfo.url.includes('/child/consulting')) return;
+  if (!changeInfo.url || !APP_URL_RE.test(changeInfo.url)) return;
   const cfg = await getConfig();
   if (!cfg.settings.maximizeConsultWindow) return;
   const key = 'maximized:' + tab.windowId;
@@ -312,10 +336,9 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
   if (done) return; // une seule fois par fenêtre : l'utilisateur garde la main ensuite
   try {
     const win = await chrome.windows.get(tab.windowId);
-    if (win.type === 'popup' && win.state === 'normal') {
-      await chrome.windows.update(tab.windowId, { state: 'maximized' });
-    }
+    if (win.type !== 'popup') return;
     await chrome.storage.session.set({ [key]: true });
+    if (win.state === 'normal') await chrome.windows.update(tab.windowId, { state: 'maximized' });
   } catch {
     /* fenêtre déjà fermée */
   }
@@ -331,7 +354,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       if (msg && msg.atm === 'page') {
         const fn = PAGE_HANDLERS[msg.type];
         if (!fn) throw new Error('Action inconnue : ' + msg.type);
-        return { ok: true, data: await fn(msg.payload || {}) };
+        return { ok: true, data: await fn(msg.payload || {}, sender) };
       }
       if (msg && msg.atm === 'popup') return { ok: true, data: await handlePopup(msg) };
       return { ok: false, error: 'message ignoré' };

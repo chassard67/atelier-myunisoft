@@ -13,6 +13,8 @@
 //                                 (asynchrones ici : renvoient des Promise)
 //   ATM.onReady(fn)             → exécute fn quand le DOM est prêt, même si
 //                                 le module est injecté après DOMContentLoaded
+//   ATM.setZoom(facteur)        → zoom de l'onglet (ex-webFrame.setZoomFactor d'Electron)
+//   ATM.diag(texte)             → télécharge diag-N.txt (ex-IPC 'tmbc-diag' d'Electron)
 //   ATM.log(...)                → console.log préfixé
 
 (function () {
@@ -24,6 +26,7 @@
   const boot = window.__ATM_BOOT || {};
   const pending = new Map();
   let seq = 0;
+  let diagCounter = 0;
 
   window.addEventListener('message', (event) => {
     if (event.source !== window) return;
@@ -93,6 +96,23 @@
     },
     setValue: (key, value) => call('store-set', { key, value }),
     onReady,
+    setZoom: (factor) => call('set-zoom', { factor }),
+    diag: (text) => {
+      // Fichier texte téléchargé dans le dossier Téléchargements (Electron
+      // l'écrivait à côté de main.js, avec une capture d'écran en plus).
+      diagCounter += 1;
+      const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(new Blob([String(text)], { type: 'text/plain;charset=utf-8' }));
+      a.download = 'diag-' + stamp + '-' + diagCounter + '.txt';
+      (document.body || document.documentElement).appendChild(a);
+      a.click();
+      setTimeout(() => {
+        URL.revokeObjectURL(a.href);
+        a.remove();
+      }, 1000);
+      console.log('[Atelier] diagnostic téléchargé :', a.download);
+    },
     log: (...args) => console.log('%c[Atelier]', 'color:#10b981;font-weight:bold', ...args),
   });
 })();

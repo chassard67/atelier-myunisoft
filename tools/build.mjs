@@ -24,7 +24,7 @@ const RUNTIME = 'lib/atm-runtime.js';
 
 const sha256 = (s) => createHash('sha256').update(s, 'utf8').digest('hex');
 
-export function parseHeader(src, file) {
+export function parseHeader(src, file, defaults = {}) {
   const block = src.match(/\/\/\s*==UserScript==([\s\S]*?)\/\/\s*==\/UserScript==/);
   if (!block) throw new Error(`${file} : en-tête ==UserScript== introuvable`);
   const meta = { match: [], 'exclude-match': [], connect: [] };
@@ -38,6 +38,7 @@ export function parseHeader(src, file) {
   for (const k of ['name', 'version']) {
     if (!meta[k]) throw new Error(`${file} : @${k} manquant`);
   }
+  if (!meta.match.length) meta.match = [...(defaults.matches || [])];
   if (!meta.match.length) throw new Error(`${file} : au moins un @match est requis`);
   if (/require\(['"]electron['"]\)/.test(src)) {
     throw new Error(`${file} : contient encore require('electron') — utiliser ATM.call()/ATM.http()`);
@@ -58,14 +59,24 @@ export function build({ zip = false } = {}) {
 
   const scripts = [];
   const connect = new Set(publishCfg.connect || []);
+  // Ordre d'exécution = publish.json "order" (ordre des require() du preload
+  // Electron : premium.js définit window.TMBC avant les autres modules), puis
+  // les modules non listés par ordre alphabétique.
+  const order = publishCfg.order || [];
+  const rank = (f) => {
+    const i = order.indexOf(path.basename(f, '.js'));
+    return i === -1 ? order.length : i;
+  };
   const files = fs
     .readdirSync(SRC)
     .filter((f) => f.endsWith('.js'))
-    .sort();
+    .sort((a, b) => rank(a) - rank(b) || a.localeCompare(b));
+  const missing = order.filter((id) => !files.includes(id + '.js'));
+  const required = new Set(publishCfg.required || []);
 
   for (const file of files) {
     const src = fs.readFileSync(path.join(SRC, file), 'utf8');
-    const meta = parseHeader(src, file);
+    const meta = parseHeader(src, file, { matches: publishCfg.defaultMatches });
     meta.connect.forEach((h) => connect.add(h));
     fs.writeFileSync(path.join(DIST, file), src);
     scripts.push({
@@ -79,6 +90,7 @@ export function build({ zip = false } = {}) {
       excludeMatches: meta['exclude-match'],
       runAt: meta['run-at'] || 'document-idle',
       noframes: 'noframes' in meta,
+      required: required.has(path.basename(file, '.js')),
     });
   }
 
@@ -127,12 +139,14 @@ td{padding:4px 12px;border-bottom:1px solid #eee}code{font-family:Consolas,monos
     execSync(`cd "${path.join(ROOT, 'extension')}" && zip -qr "${out}" . -x ".*"`);
   }
 
+  manifest.missing = missing;
   return manifest;
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const m = build({ zip: process.argv.includes('--zip') });
   console.log(`dist/ construit — publication ${m.build}`);
-  for (const s of m.scripts) console.log(`  • ${s.id.padEnd(24)} v${s.version.padEnd(12)} ${s.runAt}`);
+  for (const s of m.scripts) console.log(`  • ${s.id.padEnd(24)} v${s.version.padEnd(12)}${s.required ? ' (obligatoire)' : ''}`);
   console.log(`  hôtes @connect : ${m.connect.join(', ') || '(aucun)'}`);
+  if (m.missing.length) console.log(`  ⚠ modules listés dans publish.json mais absents : ${m.missing.join(', ')}`);
 }
