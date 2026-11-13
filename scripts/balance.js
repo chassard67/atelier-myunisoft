@@ -1,8 +1,22 @@
 // ==UserScript==
 // @name         MyUnisoft – Balance : vue 100% personnalisée (v2, API directe)
 // @namespace    https://nicolas.chassard/myunisoft
-// @version      3.38-ext
-// @description  v3.38 (2026-11-12, demandé par Nicolas) : nouvelle entrée « Balance Premium » dans le menu Tenue, juste
+// @version      4.0-ext
+// @description  v4.0 (2026-11-13, maquette validée par Nicolas) : REFONTE — Balance Premium s'ouvre EN SURIMPRESSION
+//               (comme Consultation Premium) au lieu de remplacer la balance native, qui reste intacte dessous (plus
+//               aucun bloc natif masqué, plus de bouton dans la barre native, plus de synchronisation forcée avec le
+//               sélecteur natif Générale/Client/Fournisseur). Charte Consultation Premium : en-tête (titre, PREMIUM,
+//               contexte, Imprimer / Export Excel / ✕), options à gauche (+ sélecteur Générale / Clients / Fourn.,
+//               + « Comparer avec N-1 »), curseur « Arrêté au » (ligne de temps : exercice N-1 + N (+ N+1), un mois
+//               par cran, fin d'exercice par défaut ; au relâcher : période = début de l'exercice concerné → fin du
+//               mois choisi, rechargement automatique ; fin d'exercice exacte = identifiant d'exercice piloté par le
+//               sélecteur natif), bandeau des totaux (comptes affichés, Débit, Crédit, Résultat) + bandeau de la
+//               sélection, tableau (lignes 30 px, en-têtes et filtres figés, Consolas, négatifs en rouge, sous-totaux
+//               et totaux colorés). Colonnes : Var % retirée (au survol de Var €), Valid collab + Valid RM fusionnées
+//               en « Valid. » (pastilles C / RM), PJ seulement si au moins un compte en a, colonnes N-1 masquables.
+//               Options d'affichage mémorisées par dossier (localStorage tmbBalOpts|<onglet>), lien « Réinitialiser
+//               les options ». Échap ou ✕ ferme la surimpression ; Imprimer n'imprime que le tableau.
+//               v3.38 (2026-11-12, demandé par Nicolas) : nouvelle entrée « Balance Premium » dans le menu Tenue, juste
 //               sous « Balance ». « Balance » = affichage natif strict (plus de clic automatique sur « Charger le tableau »,
 //               aucune vue maison) ; « Balance Premium » = notre vue. Mode mémorisé par onglet (sessionStorage
 //               tmbcBalanceMode) ; le bouton de bascule de la barre de titre reste disponible et met à jour ce mode.
@@ -398,7 +412,60 @@
     commentCounts: {}, // { id_account: nombre de commentaires } — rempli à la demande (voir refreshCommentCounts)
     aged: false, // "Balance âgée" (uniquement Client/Fournisseur) — voir buildAgedApiUrl
     agedCompareTo: 1, // 1 = Date de facture, 2 = Date d'échéance (reniflé en direct sur le panneau natif)
+    compareN1: true, // (v4.0) colonnes N-1 (Solde N-1, Var €) affichées — 100 % côté client
+    revisionFyKey: '', // (v4.0) exercice "début|fin" auquel correspond dossierRevisionId
   };
+
+  // (v4.0, demande de Nicolas) Options d'affichage mémorisées PAR DOSSIER
+  // (identifiant d'onglet société de l'URL /tab/<id>/) : on retrouve ses
+  // réglages en revenant sur la balance d'un dossier ; un autre dossier
+  // repart des réglages par défaut. Les dates ne sont pas mémorisées (la
+  // balance s'ouvre toujours sur l'exercice proposé par MyUnisoft).
+  const OPTS_KEYS = [
+    'subtype', 'filterRange', 'filterRangeUserEdited', 'unbalancedOnly', 'centralizeAccount',
+    'unvalidatedOnly', 'showRevisionCols', 'showDebitCredit', 'showSubtotals', 'showClassSubtotals',
+    'showMonthly', 'showMonthlyCumulative', 'compareN1', 'aged', 'agedCompareTo', 'columnWidths',
+  ];
+  // Options qui changent la requête serveur : un écart avec ce qui a été
+  // reniflé impose un rechargement.
+  const OPTS_API_KEYS = ['subtype', 'filterRange', 'unbalancedOnly', 'centralizeAccount', 'unvalidatedOnly', 'showRevisionCols', 'aged', 'agedCompareTo'];
+  function optsStorageKey() {
+    const t = extractTabId(location.pathname);
+    return t ? 'tmbBalOpts|' + t : null;
+  }
+  function saveOpts() {
+    const k = optsStorageKey();
+    if (!k) return;
+    const o = {};
+    OPTS_KEYS.forEach((key) => {
+      o[key] = state[key];
+    });
+    try {
+      localStorage.setItem(k, JSON.stringify(o));
+    } catch (e) {
+      /* stockage plein ou indisponible */
+    }
+  }
+  // Applique les options mémorisées du dossier courant ; renvoie true si une
+  // option qui change la requête serveur diffère de l'état reniflé.
+  function restoreOpts() {
+    const k = optsStorageKey();
+    let o = null;
+    try {
+      o = k ? JSON.parse(localStorage.getItem(k) || 'null') : null;
+    } catch (e) {
+      o = null;
+    }
+    if (!o || typeof o !== 'object') return false;
+    let apiChanged = false;
+    OPTS_KEYS.forEach((key) => {
+      if (!(key in o)) return;
+      if (OPTS_API_KEYS.includes(key) && JSON.stringify(o[key]) !== JSON.stringify(state[key])) apiChanged = true;
+      state[key] = o[key];
+    });
+    if (state.subtype === 0) state.aged = false;
+    return apiChanged;
+  }
 
   const DEFAULT_RANGE_BY_SUBTYPE = { 1: '41-419999', 2: '40-409999' };
 
@@ -887,7 +954,9 @@
       bootstrapped = true;
       stopBootstrapPolling();
       applySniffedData();
+      const reload = restoreOpts();
       installCustomUI();
+      if (reload) loadBalance();
       return;
     }
     if (bootstrapTimer) return; // sondage déjà en cours, on ne relance rien de plus
@@ -902,7 +971,9 @@
         bootstrapped = true;
         stopBootstrapPolling();
         applySniffedData();
+        const reload = restoreOpts();
         installCustomUI();
+        if (reload) loadBalance();
         return;
       }
       // On ne clique le bouton natif qu'une seule fois : le rechargement en
@@ -950,6 +1021,7 @@
         .map(parseFiscalYearEntry)
         .filter(Boolean);
     }
+    if (sniff.params.dossier_revision_id) state.revisionFyKey = state.startDate + '|' + state.endDate;
   }
 
   window.addEventListener('tmb-sniffed', () => {
@@ -964,6 +1036,7 @@
     // (voir le commentaire détaillé sur switchFiscalYear plus bas).
     if (sniff.params && sniff.params.dossier_revision_id) {
       state.dossierRevisionId = sniff.params.dossier_revision_id;
+      state.revisionFyKey = toInputDate(sniff.params.start_date) + '|' + toInputDate(sniff.params.end_date);
     }
   });
 
@@ -1053,16 +1126,7 @@
     // Pendant ce court aller-retour natif, la réponse peut reconstruire le
     // tableau natif cependant masqué (hiddenNativeBlocks) : on réapplique
     // display:none en continu au cas où React aurait recréé les nœuds.
-    const reapplyHidden = setInterval(() => {
-      hiddenNativeBlocks.forEach((el) => {
-        if (customActive) el.style.display = 'none';
-      });
-    }, 100);
     const changed = await waitFor(() => state.dossierRevisionId !== previousRevisionId, 6000, 150);
-    clearInterval(reapplyHidden);
-    hiddenNativeBlocks.forEach((el) => {
-      if (customActive) el.style.display = 'none';
-    });
     return !!changed;
   }
 
@@ -1107,59 +1171,79 @@
   let customActive = readBalanceMode();
   let titleBlockRef = null;
 
-  function installCustomUI() {
-    if (document.getElementById('tmb-root')) return;
+  // (v4.0) Balance Premium s'affiche désormais EN SURIMPRESSION (comme
+  // Consultation Premium) : la balance native reste en place, intacte et
+  // visible dessous — plus aucun bloc natif masqué. On garde seulement une
+  // référence à la barre de titre native « Editions courantes » pour piloter
+  // le sélecteur « Exercice(s) » natif (switchFiscalYear).
+  function findNativeTitleBlock() {
     const h1 = Array.from(document.querySelectorAll('*')).find(
       (n) => n.children.length === 0 && n.textContent.trim() === 'Editions courantes'
     );
-    if (!h1) {
-      setTimeout(installCustomUI, 300);
+    return h1 ? h1.parentElement : null;
+  }
+
+  function installCustomUI() {
+    if (document.getElementById('tmb-root')) {
+      applyDisplayMode();
       return;
     }
     lastTabId = extractTabId(location.pathname);
-    // Important : la barre de titre ("Editions courantes") contient aussi le
-    // sélecteur natif de type d'édition (Balance / SIG / Bilan / Grand livre...)
-    // et le sélecteur Générale/Client/Fournisseur. On ne doit PAS la masquer,
-    // sinon l'utilisateur perd la possibilité de changer de catégorie
-    // d'édition depuis cette page. On ne masque que les blocs qu'on
-    // remplace réellement : la ligne de filtres et le tableau natif.
-    const titleBlock = h1.parentElement;
-    const container = titleBlock.parentElement;
-    if (!container) return;
-    titleBlockRef = titleBlock;
-
-    hiddenNativeBlocks = Array.from(container.children).filter((c) => c !== titleBlock);
-    hiddenNativeBlocks.forEach((el) => {
-      el.style.display = 'none';
-    });
-
+    titleBlockRef = findNativeTitleBlock();
     const root = document.createElement('div');
     root.id = 'tmb-root';
-    container.parentElement.insertBefore(root, container.nextSibling);
-
+    document.body.appendChild(root);
     injectCss();
-    renderApp();
-    installToggleButton(titleBlock);
     customActive = readBalanceMode();
+    renderApp();
     applyDisplayMode();
-
-    // Le sélecteur natif "Générale / Client / Fournisseur" reste dans la
-    // barre de titre : plutôt que de dupliquer ce choix dans notre panneau,
-    // on sonde régulièrement le texte de la barre de titre pour rester
-    // synchronisé quand l'utilisateur le change directement (un
-    // MutationObserver ciblé s'est avéré peu fiable : MUI remplace souvent
-    // les nœuds au lieu de modifier leur texte en place).
-    //
-    // (2026-07-31, migration dans l'architecture modulaire) : ce sondage
-    // possédait son propre setInterval(500ms) — remplacé par le tick partagé
-    // du core (registerScan, ~1s, cf. scanBalance en fin de fichier), qui lit
-    // titleBlockRef à chaque passage. Premier appel immédiat conservé ici
-    // pour un effet instantané dès l'installation (sans attendre le premier
-    // tick), exactement comme avant.
-    checkNativeSubtype(titleBlock);
-    repositionToggleButton(titleBlock);
-    maskNativeAgedCheckbox(titleBlock);
   }
+
+  // Zone de contenu MyUnisoft : à droite du menu bleu, sous la barre
+  // d'onglets — même calcul que Consultation Premium.
+  function placeOverlay(root) {
+    if (!root) return;
+    const sb = window.TMBC.getSidebar && window.TMBC.getSidebar();
+    const sr = sb && sb.getBoundingClientRect();
+    const left = sr && sr.width > 0 ? Math.round(sr.right) : 160;
+    const home = Array.from(document.querySelectorAll('button,a,[role=tab]')).find((e) => {
+      if (!/^Accueil$/.test(e.textContent.trim()) && e.getAttribute('data-id') !== 'tab--2') return false;
+      const r = e.getBoundingClientRect();
+      return r.width > 0 && r.top < 90;
+    });
+    const top = home ? Math.round(home.getBoundingClientRect().bottom + 8) : 58;
+    if (root.style.left !== left + 'px') root.style.left = left + 'px';
+    if (root.style.top !== top + 'px') root.style.top = top + 'px';
+  }
+
+  function closeOverlay() {
+    writeBalanceMode(false);
+    customActive = false;
+    applyDisplayMode();
+  }
+
+  // Échap : ferme la surimpression (sauf si une info-bulle PJ/commentaires
+  // est ouverte, qu'Échap ferme en priorité, ou si on tape dans un champ).
+  document.addEventListener(
+    'keydown',
+    (e) => {
+      if (e.key !== 'Escape') return;
+      const root = document.getElementById('tmb-root');
+      if (!root || root.style.display === 'none') return;
+      if (document.querySelector('.tmb-popover')) return;
+      // menu / fenêtre MyUnisoft ouverts par-dessus : Échap leur revient
+      if (document.querySelector('.MuiDialog-root, .MuiPopover-root, .MuiMenu-root, .MuiModal-root')) return;
+      const t = e.target;
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'SELECT') && root.contains(t) && t.type !== 'range' && t.type !== 'checkbox') {
+        t.blur();
+        return;
+      }
+      e.preventDefault();
+      e.stopPropagation();
+      closeOverlay();
+    },
+    true
+  );
 
   // La case native "Âgée" est remplacée par nos 2 propres cases ("Balance
   // âgée - date de facture" / "- date de règlement") dans le panneau de
@@ -1346,6 +1430,7 @@
       if (dlg) dlg.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', keyCode: 27, bubbles: true, cancelable: true }));
       if (document.getElementById('tmb-root')) {
         customActive = true;
+        renderApp();
         applyDisplayMode();
       } else {
         bootstrapGaveUp = false;
@@ -1373,23 +1458,9 @@
 
   function applyDisplayMode() {
     const root = document.getElementById('tmb-root');
-    if (customActive) {
-      if (root) root.style.display = '';
-      hiddenNativeBlocks.forEach((el) => {
-        el.style.display = 'none';
-      });
-    } else {
-      if (root) root.style.display = 'none';
-      hiddenNativeBlocks.forEach((el) => {
-        el.style.display = '';
-      });
-    }
-    const btn = document.getElementById('tmb-toggle-btn');
-    if (btn) btn.textContent = customActive ? 'Affichage MyUnisoft' : 'Affichage Premium';
-    applyToggleButtonColors(btn);
-    // Bascule immédiate de la case native "Âgée" (masquée seulement en
-    // Affichage Premium) au lieu d'attendre le prochain tick du scan partagé.
-    if (btn && btn.parentElement) maskNativeAgedCheckbox(btn.parentElement);
+    if (!root) return;
+    root.style.display = customActive ? 'flex' : 'none';
+    if (customActive) placeOverlay(root);
   }
 
   // -----------------------------------------------------------------------
@@ -1411,24 +1482,25 @@
   ];
   // Solde N / Solde N-1, sous leur forme "montant unique" (peut être négatif).
   const SOLDE_COLUMNS = [
-    { id: 'solde_n', label: 'Solde N', sortable: true, align: 'right', width: '95px' },
-    { id: 'solde_n1', label: 'Solde N-1', sortable: true, align: 'right', width: '95px' },
+    { id: 'solde_n', label: 'Solde N', sortable: true, align: 'right', width: '118px' },
+    { id: 'solde_n1', label: 'Solde N-1', sortable: true, align: 'right', width: '118px', n1: true },
   ];
   // Même chose sous forme "Débit / Crédit" (deux colonnes, toujours positives) :
   // demande explicite, disponible en Générale comme en Client/Fournisseur.
   const DEBIT_CREDIT_COLUMNS = [
-    { id: 'debit_n', label: 'Débit N', sortable: true, align: 'right', width: '85px' },
-    { id: 'credit_n', label: 'Crédit N', sortable: true, align: 'right', width: '85px' },
-    { id: 'debit_n1', label: 'Débit N-1', sortable: true, align: 'right', width: '85px' },
-    { id: 'credit_n1', label: 'Crédit N-1', sortable: true, align: 'right', width: '85px' },
+    { id: 'debit_n', label: 'Débit N', sortable: true, align: 'right', width: '112px' },
+    { id: 'credit_n', label: 'Crédit N', sortable: true, align: 'right', width: '112px' },
+    { id: 'debit_n1', label: 'Débit N-1', sortable: true, align: 'right', width: '112px', n1: true },
+    { id: 'credit_n1', label: 'Crédit N-1', sortable: true, align: 'right', width: '112px', n1: true },
   ];
+  // (v4.0) Var % retirée (affichée au survol de Var €) ; Valid collab et
+  // Valid RM fusionnées en une colonne « Valid. » (pastilles C / RM) ; PJ
+  // affichée seulement si au moins un compte en a (cf. visibleColumns).
   const BASE_COLUMNS_END = [
-    { id: 'var_pct', label: 'Var %', sortable: true, align: 'right', width: '55px' },
-    { id: 'var_eur', label: 'Var €', sortable: true, align: 'right', width: '85px' },
-    { id: 'pj', label: 'PJ', sortable: true, align: 'center', width: '40px' },
-    { id: 'com', label: 'Com.', sortable: true, align: 'center', width: '48px' },
-    { id: 'valid_collab', label: 'Valid collab', sortable: true, align: 'center', width: '80px' },
-    { id: 'valid_rm', label: 'Valid RM', sortable: true, align: 'center', width: '80px' },
+    { id: 'var_eur', label: 'Var. €', sortable: true, align: 'right', width: '108px', n1: true },
+    { id: 'pj', label: 'PJ', sortable: true, align: 'center', width: '44px' },
+    { id: 'com', label: 'Com.', sortable: true, align: 'center', width: '52px' },
+    { id: 'valid', label: 'Valid.', sortable: true, align: 'center', width: '84px' },
   ];
 
   // "Affichage mensuel" (2026-08-01) : reproduit la case native "Mois" du
@@ -1523,10 +1595,9 @@
     { id: 'age_90', label: '< 90j', sortable: true, align: 'right', width: '85px' },
     { id: 'age_120', label: '< 120j', sortable: true, align: 'right', width: '85px' },
     { id: 'age_over120', label: '> 120j', sortable: true, align: 'right', width: '85px' },
-    { id: 'pj', label: 'PJ', sortable: true, align: 'center', width: '40px' },
-    { id: 'com', label: 'Com.', sortable: true, align: 'center', width: '48px' },
-    { id: 'valid_collab', label: 'Valid collab', sortable: true, align: 'center', width: '80px' },
-    { id: 'valid_rm', label: 'Valid RM', sortable: true, align: 'center', width: '80px' },
+    { id: 'pj', label: 'PJ', sortable: true, align: 'center', width: '44px' },
+    { id: 'com', label: 'Com.', sortable: true, align: 'center', width: '52px' },
+    { id: 'valid', label: 'Valid.', sortable: true, align: 'center', width: '84px' },
   ];
 
   function allColumns() {
@@ -1686,6 +1757,9 @@
         return (node.validation && node.validation.VCOL) || '';
       case 'valid_rm':
         return (node.validation && node.validation.VRM) || '';
+      case 'valid':
+        // tri : nombre de validations (C puis RM)
+        return (isValidated(node, 'VCOL') ? 2 : 0) + (isValidated(node, 'VRM') ? 1 : 0);
       // Mode "Balance âgée" : total_values est un tableau à 1 valeur (le
       // solde) sur les lignes de compte réelles ; column_values porte les 6
       // tranches d'ancienneté (< 30j ... > 120j), dans cet ordre (reniflé en
@@ -1758,6 +1832,8 @@
         return typeof v === 'number' ? fmtPercent(v) : '';
       case 'pj':
         return v ? String(v) : '';
+      case 'valid':
+        return (isValidated(node, 'VCOL') ? 'C' : '') + (isValidated(node, 'VRM') ? (isValidated(node, 'VCOL') ? ' ' : '') + 'RM' : '');
       case 'com': {
         if (!v) return '';
         const count = node.id_account != null ? state.commentCounts[node.id_account] : undefined;
@@ -1776,11 +1852,33 @@
   // externe à charger, juste assez lisible en 15x15px dans l'en-tête.
   const EXCEL_ICON_SVG = `<svg width="15" height="15" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><rect x="1" y="1" width="22" height="22" rx="3" fill="#1D6F42"/><rect x="4" y="4" width="16" height="16" fill="#ffffff" opacity="0.15"/><path d="M6 6h5.2v3.6H6zM12.4 6h5.6v3.6h-5.6zM6 10.8h5.2v3.6H6zM12.4 10.8h5.6v3.6h-5.6zM6 15.6h5.2V19H6zM12.4 15.6h5.6V19h-5.6z" fill="none" stroke="#ffffff" stroke-width="0.6"/><text x="12" y="16.5" font-size="9" font-weight="700" fill="#ffffff" text-anchor="middle" font-family="Arial, sans-serif">X</text></svg>`;
 
-  const REVISION_COLUMN_IDS = new Set(['pj', 'com', 'valid_collab', 'valid_rm']);
+  const PJ_ICON_SVG = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true" style="vertical-align:-2px"><path d="M21 12l-8.5 8.5a5 5 0 0 1-7-7L14 5a3.5 3.5 0 0 1 5 5l-8.5 8.5a2 2 0 0 1-3-3L15 8"/></svg>';
+  const REVISION_COLUMN_IDS = new Set(['pj', 'com', 'valid', 'valid_collab', 'valid_rm']);
+  // (v4.0) Validation : valeur renvoyée par l'API dans node.validation (VCOL
+  // collaborateur, VRM responsable de mission) ; toute valeur non vide autre
+  // que « 0 / false / non » est considérée comme validée.
+  function isValidated(node, key) {
+    const v = node && node.validation ? node.validation[key] : null;
+    if (v === null || v === undefined || v === false) return false;
+    const t = String(v).trim().toLowerCase();
+    return !!t && !['0', 'false', 'non', 'n', 'no'].includes(t);
+  }
+  // PJ du dossier de révision : colonne affichée seulement si au moins un
+  // compte en a (mémorisé par jeu de données).
+  function anyPj() {
+    const d = state.data;
+    if (!d) return false;
+    if (d._tmbAnyPj === undefined) {
+      const root = Array.isArray(d.data) ? d.data : Array.isArray(d.details) ? d.details : [];
+      d._tmbAnyPj = flattenLeaves(root, []).some((r) => (r.node.nb_da_acc_docs || 0) > 0);
+    }
+    return d._tmbAnyPj;
+  }
   function visibleColumns() {
-    const cols = allColumns();
-    if (state.showRevisionCols) return cols;
-    return cols.filter((c) => !REVISION_COLUMN_IDS.has(c.id));
+    let cols = allColumns();
+    if (!state.compareN1) cols = cols.filter((c) => !c.n1);
+    if (!state.showRevisionCols) return cols.filter((c) => !REVISION_COLUMN_IDS.has(c.id));
+    return cols.filter((c) => c.id !== 'pj' || anyPj());
   }
 
   // -----------------------------------------------------------------------
@@ -1993,10 +2091,16 @@
           `<option value="${i}" ${f.start === state.startDate && f.end === state.endDate ? 'selected' : ''}>${f.label}</option>`
       )
       .join('');
+    const seg = (v, lab) =>
+      `<button type="button" class="tmb-seg-btn${state.subtype === v ? ' tmb-seg-on' : ''}" data-subtype="${v}">${lab}</button>`;
     return `
       <div class="tmb-opt-group">
+        <label>Balance</label>
+        <div class="tmb-seg">${seg(0, 'Générale')}${seg(1, 'Clients')}${seg(2, 'Fourn.')}</div>
+      </div>
+      <div class="tmb-opt-group">
         <label>Comptes (plage)</label>
-        <input type="text" id="tmb-range" value="${state.filterRange}" placeholder="ex: 41-419999 (laisser vide = tous)" />
+        <input type="text" id="tmb-range" value="${state.filterRange}" placeholder="ex. 41-419999" title="Laisser vide pour tous les comptes" />
       </div>
       <div class="tmb-opt-row2">
         <div class="tmb-opt-group">
@@ -2020,6 +2124,7 @@
         <div class="tmb-opt-check-group-title">Affichage</div>
         <div class="tmb-opt-checks">
           <label class="${state.showMonthly || state.showMonthlyCumulative ? 'tmb-opt-disabled' : ''}"><input type="checkbox" id="tmb-unbalanced" ${state.unbalancedOnly ? 'checked' : ''} ${state.showMonthly || state.showMonthlyCumulative ? 'disabled' : ''}/> Non soldés uniquement</label>
+          <label><input type="checkbox" id="tmb-compare-n1" ${state.compareN1 ? 'checked' : ''}/> Comparer avec N-1</label>
           <label><input type="checkbox" id="tmb-debit-credit" ${state.showDebitCredit ? 'checked' : ''}/> Soldes débiteurs / créditeurs</label>
           <label><input type="checkbox" id="tmb-subtotals" ${state.showSubtotals ? 'checked' : ''}/> Sous-totaux (avec regroupements)</label>
           <label><input type="checkbox" id="tmb-class-subtotals" ${state.showClassSubtotals ? 'checked' : ''}/> Sous-totaux (sans regroupements)</label>
@@ -2038,11 +2143,12 @@
       <div class="tmb-opt-check-group">
         <div class="tmb-opt-check-group-title">Révision</div>
         <div class="tmb-opt-checks">
-          <label><input type="checkbox" id="tmb-revisions" ${state.showRevisionCols ? 'checked' : ''}/> Colonnes de révision (PJ/Com/Valid)</label>
+          <label><input type="checkbox" id="tmb-revisions" ${state.showRevisionCols ? 'checked' : ''}/> Colonnes de révision (Com. / Valid. ; PJ si présentes)</label>
           <label><input type="checkbox" id="tmb-unvalidated" ${state.unvalidatedOnly ? 'checked' : ''}/> Comptes non validés uniquement</label>
         </div>
       </div>
       <button id="tmb-load" class="tmb-load-btn" ${state.loading ? 'disabled' : ''}>${state.loading ? 'Chargement…' : 'Charger le tableau'}</button>
+      <button type="button" id="tmb-reset-opts" class="tmb-link-btn">Réinitialiser les options</button>
       ${
         state.error
           ? `<div class="tmb-error">Erreur : ${state.error.replace(/\n/g, '<br>')}${
@@ -2064,9 +2170,7 @@
       // La cellule d'en-tête de la colonne "expand" (tout à gauche, au-dessus
       // des flèches déplier/replier) n'affiche jamais de libellé : c'est là
       // qu'on loge le bouton d'export Excel du tableau tel qu'affiché.
-      const label = c.id === 'expand'
-        ? `<button type="button" id="tmb-export-btn" class="tmb-export-btn" title="Exporter le tableau affiché vers Excel">${EXCEL_ICON_SVG}</button>`
-        : c.label;
+      const label = c.id === 'expand' ? '' : c.label;
       return `<th data-col="${c.id}" class="${c.sortable ? 'tmb-sortable ' + sortCls : ''}" style="${width ? 'width:' + width + ';' : ''}text-align:${c.align || 'left'} !important"><span class="tmb-th-label">${label}</span>${resizer}</th>`;
     }).join('');
   }
@@ -2074,7 +2178,7 @@
   function renderFilterRow() {
     return visibleColumns().map((c) => {
       if (c.id === 'expand') return '<th data-col="expand"></th>';
-      return `<th data-col="${c.id}"><input type="text" class="tmb-filter-input" data-col="${c.id}" placeholder="Filtrer…" value="${state.filterText[c.id] || ''}"/></th>`;
+      return `<th data-col="${c.id}"><input type="text" class="tmb-filter-input" data-col="${c.id}" value="${state.filterText[c.id] || ''}"/></th>`;
     }).join('');
   }
 
@@ -2110,21 +2214,28 @@
         let display = cellDisplay(node, c.id);
         let inner = display;
         let cellTitle = '';
-        if (c.id === 'label' && display && display.length > LABEL_TRUNCATE_LENGTH) {
-          cellTitle = display;
-          display = display.slice(0, LABEL_TRUNCATE_LENGTH) + '…';
-          inner = display;
-        }
+        if (c.id === 'label' && display) cellTitle = display;
         if (isLinkableCell(node, c.id)) {
           inner = `<span class="tmb-acct-link" data-account-id="${node.id_account}">${display}</span>`;
         } else if (c.id === 'pj' && !isSubtotal && node.id_l_dossier_revision_compte) {
           const hasDocs = (node.nb_da_acc_docs || 0) > 0;
-          inner = `<span class="tmb-pj-link${hasDocs ? '' : ' tmb-pj-link-empty'}" data-docs-object-id="${xmlEscape(String(node.id_l_dossier_revision_compte))}" title="Pièces jointes">📎${hasDocs ? ' ' + display : ''}</span>`;
+          inner = hasDocs
+            ? `<span class="tmb-pj-link" data-docs-object-id="${xmlEscape(String(node.id_l_dossier_revision_compte))}" title="Pièces jointes">${PJ_ICON_SVG} ${display}</span>`
+            : '';
+        } else if (c.id === 'valid' && !isSubtotal && node.validation) {
+          const pill = (ok, lab, full) =>
+            `<span class="tmb-valid${ok ? ' tmb-valid-ok' : ''}" title="${full} : ${ok ? 'validé' : 'à faire'}">${lab}</span>`;
+          inner = pill(isValidated(node, 'VCOL'), 'C', 'Collaborateur') + ' ' + pill(isValidated(node, 'VRM'), 'RM', 'Responsable de mission');
         } else if (c.id === 'com' && !isSubtotal && node.id_account) {
           const hasCom = !!node.hasComment;
           const count = hasCom ? state.commentCounts[node.id_account] : undefined;
-          const label = hasCom && typeof count === 'number' ? `💬 ${count}` : '💬';
-          inner = `<span class="tmb-com-link${hasCom ? '' : ' tmb-com-link-empty'}" data-account-id="${xmlEscape(String(node.id_account))}" title="Commentaires">${label}</span>`;
+          const label = hasCom ? (typeof count === 'number' ? String(count) : '•') : '';
+          inner = hasCom
+            ? `<span class="tmb-com-link" data-account-id="${xmlEscape(String(node.id_account))}" title="Commentaires du compte">${label}</span>`
+            : '';
+        }
+        if (c.id === 'var_eur' && typeof node.varPercent === 'number') {
+          cellTitle = 'Variation : ' + fmtPercent(node.varPercent);
         }
         const titleAttr = cellTitle ? ` title="${xmlEscape(cellTitle)}"` : '';
         return `<td class="${cls}" data-col="${c.id}" style="text-align:${c.align || 'left'} !important${style ? ';' + style : ''}"${titleAttr}>${inner}</td>`;
@@ -2683,33 +2794,290 @@
     setTimeout(() => URL.revokeObjectURL(url), 5000);
   }
 
+  // ---- Curseur « Arrêté au » (fin de mois) ------------------------------
+  const MOIS_COURT = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'];
+  const MOIS_LONG = ['janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'];
+  const pad2 = (n) => String(n).padStart(2, '0');
+  function isoToFrDate(iso) {
+    return iso ? iso.slice(8, 10) + '/' + iso.slice(5, 7) + '/' + iso.slice(0, 4) : '';
+  }
+  function monthEndIso(y, m) {
+    return y + '-' + pad2(m + 1) + '-' + pad2(new Date(y, m + 1, 0).getDate());
+  }
+  function fyContaining(iso) {
+    return state.fiscalYears.find((f) => f.start <= iso && iso <= f.end) || null;
+  }
+  // Mois proposés : exercice N-1 + exercice en cours (+ N+1 s'il existe).
+  function timelineModel() {
+    const fys = state.fiscalYears.slice().sort((a, b) => (a.start < b.start ? -1 : 1));
+    if (!fys.length || !state.endDate) return null;
+    const cur = fyContaining(state.endDate) || fyContaining(state.startDate) || fys[fys.length - 1];
+    const ci = fys.indexOf(cur);
+    const from = fys[Math.max(0, ci - 1)];
+    const to = fys[Math.min(fys.length - 1, ci + 1)];
+    const months = [];
+    let y = Number(from.start.slice(0, 4));
+    let m = Number(from.start.slice(5, 7)) - 1;
+    for (let guard = 0; guard < 48; guard++) {
+      const end = monthEndIso(y, m);
+      if (end > to.end) break;
+      months.push({ y, m, end });
+      m++;
+      if (m > 11) {
+        m = 0;
+        y++;
+      }
+    }
+    if (!months.length) return null;
+    let idx = months.findIndex((x) => x.end >= state.endDate);
+    if (idx < 0) idx = months.length - 1;
+    return { months, idx, cur, fys };
+  }
+  function timelineLabel(model, i) {
+    const mo = model.months[i];
+    const fy = fyContaining(mo.end);
+    const status = fy && mo.end === fy.end ? "fin d'exercice" : 'situation intermédiaire';
+    return {
+      date: isoToFrDate(mo.end),
+      thumb: 'Fin ' + MOIS_LONG[mo.m] + ' ' + mo.y,
+      status: status + (fy ? ' · exercice du ' + isoToFrDate(fy.start) + ' au ' + isoToFrDate(fy.end) : ''),
+    };
+  }
+  function renderTimeline() {
+    const model = timelineModel();
+    if (!model) return '';
+    const n = model.months.length;
+    const pos = (i) => ((i + 0.5) / n) * 100;
+    const lab = timelineLabel(model, model.idx);
+    const curStart = model.months.findIndex((x) => x.end >= model.cur.start);
+    const curEnd = model.months.findIndex((x) => x.end >= model.cur.end);
+    const exL = curStart < 0 ? 0 : (curStart / n) * 100;
+    const exW = curEnd < 0 ? 100 - exL : ((curEnd + 1) / n) * 100 - exL;
+    const ticks = model.months
+      .map((x, i) => {
+        const yearStart = x.m === 0 || i === 0;
+        const text = yearStart ? MOIS_COURT[x.m] + ' ' + x.y : x.m % 3 === 0 ? MOIS_COURT[x.m] : '';
+        return `<div class="tmb-tl-tick" style="left:${pos(i)}%"><i style="height:${yearStart ? 13 : 6}px"></i><span>${text}</span></div>`;
+      })
+      .join('');
+    return `
+      <div class="tmb-tl">
+        <div class="tmb-tl-head">
+          <b>Arrêté au</b><b class="tmb-tl-date">${lab.date}</b><span class="tmb-tl-status">${lab.status}</span>
+          <div style="flex:1"></div>
+          <span class="tmb-tl-hint">Glisser le curseur · <b>← →</b> mois par mois</span>
+        </div>
+        <div class="tmb-tl-zone">
+          <div class="tmb-tl-track"></div>
+          <div class="tmb-tl-ex" style="left:${exL}%;width:${exW}%" title="Exercice en cours"></div>
+          <div class="tmb-tl-fill" style="width:${pos(model.idx)}%"></div>
+          ${ticks}
+          <span class="tmb-tl-label" style="left:${pos(model.idx)}%">${lab.thumb}</span>
+          <span class="tmb-tl-thumb" style="left:${pos(model.idx)}%"></span>
+          <input type="range" id="tmb-tl-range" min="0" max="${n - 1}" step="1" value="${model.idx}" aria-label="Fin de période (fin de mois)" ${state.loading ? 'disabled' : ''}/>
+        </div>
+      </div>`;
+  }
+  // Applique le mois choisi : période = début de l'exercice qui contient la
+  // fin de mois → fin de mois. Une fin d'exercice exacte garde l'identifiant
+  // d'exercice (dossier_revision_id), au besoin en pilotant le sélecteur
+  // natif « Exercice(s) » ; une date intermédiaire est une période
+  // personnalisée, envoyée sans identifiant (comme l'affichage natif).
+  async function applyTimelineMonth(i) {
+    const model = timelineModel();
+    if (!model || !model.months[i]) return;
+    const end = model.months[i].end;
+    const fy = fyContaining(end);
+    if (!fy) return;
+    state.startDate = fy.start;
+    state.endDate = end;
+    const key = fy.start + '|' + fy.end;
+    if (end === fy.end && key !== state.revisionFyKey) {
+      await selectFiscalYear(state.fiscalYears.indexOf(fy));
+      return;
+    }
+    loadBalance();
+  }
+
+  // ---- Bandeaux de totaux ------------------------------------------------
+  function leafRowsOf(rows) {
+    return rows.filter((r) => !r.hasChildren && !r.isSubtotal && r.node && r.node.account_number && !isSummaryLabel(r.node.label));
+  }
+  function renderBars() {
+    if (!state.data || state.aged || !Array.isArray(state.data.data)) return '';
+    // tous les comptes retenus par les filtres, y compris dans les groupes repliés
+    const leaves = flattenLeaves(state.data.data, [])
+      .map((r) => r.node)
+      .filter((n) => n.account_number && !isSummaryLabel(n.label) && matchesFilters(n));
+    const g = sumGrossDebitCredit(leaves);
+    let res = 0;
+    leaves.forEach((n) => {
+      if (/^[67]/.test(String(n.account_number))) res -= (n.exercice_values && n.exercice_values[0]) || 0;
+    });
+    const f = (v) => `<b class="${v < 0 ? 'tmb-bar-neg' : ''}">${fmtAmount(v)}</b>`;
+    let sel = '';
+    if (state.selectedKeys.size) {
+      const chosen = leaves.filter((n) => state.selectedKeys.has(selectionKeyFor(n)));
+      const solde = chosen.reduce((a, n) => a + ((n.exercice_values && n.exercice_values[0]) || 0), 0);
+      sel = `<div class="tmb-bar tmb-bar-sel"><span>Sélection : <b>${chosen.length} compte${chosen.length > 1 ? 's' : ''}</b></span><span>Solde ${f(solde)}</span></div>`;
+    }
+    return `
+      <div class="tmb-bars">
+        <div class="tmb-bar"><span class="tmb-bar-count">Affichage : <b>${leaves.length} compte${leaves.length > 1 ? 's' : ''}</b></span>
+          <span>Débit ${f(g.debitN)}</span><span>Crédit ${f(g.creditN)}</span><span>Résultat ${f(res)}</span></div>
+        ${sel}
+      </div>`;
+  }
+
+  function overlayInfo() {
+    const tabId = extractTabId(location.pathname);
+    const tab = tabId ? document.querySelector('.navBar button[data-id="tab-' + tabId + '"]') : null;
+    const soc = tab ? tab.textContent.trim() : '';
+    const type = state.aged ? 'Balance âgée' : ['Balance générale', 'Balance clients', 'Balance fournisseurs'][state.subtype] || 'Balance';
+    const per = state.startDate && state.endDate ? 'du ' + isoToFrDate(state.startDate) + ' au ' + isoToFrDate(state.endDate) : '';
+    return [soc, type, per, state.compareN1 && !state.aged ? 'comparée à N-1' : ''].filter(Boolean).join(' · ');
+  }
+
   function renderApp() {
     const root = document.getElementById('tmb-root');
     if (!root) return;
     closeInfoPopover();
+    saveOpts();
+    // le tableau est redessiné à chaque changement : on garde sa position de défilement
+    const oldWrap = root.querySelector('.tmb-table-wrap');
+    const scroll = oldWrap ? [oldWrap.scrollTop, oldWrap.scrollLeft] : null;
     root.innerHTML = `
+      <div class="tmb-head">
+        <b class="tmb-title">Balance Premium</b><span class="tmb-pill">PREMIUM</span>
+        <span class="tmb-info">${xmlEscape(overlayInfo())}</span>
+        <div style="flex:1"></div>
+        <button type="button" id="tmb-print" class="tmb-btn">Imprimer</button>
+        <button type="button" id="tmb-export-btn" class="tmb-btn tmb-btn-primary" title="Exporter le tableau affiché vers Excel">Export Excel</button>
+        <button type="button" id="tmb-close" class="tmb-btn tmb-btn-x" aria-label="Fermer (retour à la balance MyUnisoft)" title="Fermer (Échap)">✕</button>
+      </div>
       <div class="tmb-shell">
         <div class="tmb-options">${renderOptionsPanel()}</div>
-        <div class="tmb-table-wrap">${renderTablePanel()}</div>
+        <div class="tmb-main">
+          ${state.aged ? '' : renderTimeline()}
+          ${renderBars()}
+          <div class="tmb-table-wrap">${renderTablePanel()}</div>
+          <div class="tmb-hints"><span><b>Clic</b> n° de compte ou montant : consultation du compte</span><span><b>Maj+clic</b> nouvelle fenêtre</span><span><b>▼ / ▶</b> replier / déplier</span><span><b>Échap</b> ou <b>✕</b> retour à la balance MyUnisoft</span></div>
+        </div>
       </div>
     `;
     attachEvents(root);
-    adjustShellHeight(root);
+    attachOverlayEvents(root);
+    if (scroll) {
+      const w = root.querySelector('.tmb-table-wrap');
+      if (w) {
+        w.scrollTop = scroll[0];
+        w.scrollLeft = scroll[1];
+      }
+    }
   }
 
-  // La barre de titre native (avec le sélecteur d'édition) reste affichée
-  // au-dessus de notre panneau : on calcule sa hauteur réelle plutôt que de
-  // supposer un décalage fixe, sinon le panneau déborde de l'écran.
-  function adjustShellHeight(root) {
-    const shell = root.querySelector('.tmb-shell');
-    if (!shell) return;
-    const top = root.getBoundingClientRect().top;
-    shell.style.height = 'calc(100vh - ' + Math.max(0, Math.round(top)) + 'px - 16px)';
+  function attachOverlayEvents(root) {
+    const $ = (sel) => root.querySelector(sel);
+    const close = $('#tmb-close');
+    if (close) close.addEventListener('click', closeOverlay);
+    const print = $('#tmb-print');
+    if (print) print.addEventListener('click', () => window.print());
+    root.querySelectorAll('.tmb-seg-btn').forEach((b) =>
+      b.addEventListener('click', () => setSubtype(Number(b.dataset.subtype)))
+    );
+    const cmp = $('#tmb-compare-n1');
+    if (cmp)
+      cmp.addEventListener('change', () => {
+        state.compareN1 = cmp.checked;
+        renderApp();
+      });
+    const reset = $('#tmb-reset-opts');
+    if (reset)
+      reset.addEventListener('click', () => {
+        const k = optsStorageKey();
+        try {
+          if (k) localStorage.removeItem(k);
+        } catch (e) {
+          /* ignore */
+        }
+        Object.assign(state, {
+          unbalancedOnly: true, centralizeAccount: false, unvalidatedOnly: false, showRevisionCols: false,
+          showDebitCredit: false, showSubtotals: false, showClassSubtotals: false, showMonthly: false,
+          showMonthlyCumulative: false, compareN1: true, aged: false, columnWidths: {},
+        });
+        loadBalance();
+      });
+    // curseur : déplacement en direct (étiquette), application au relâcher
+    const range = $('#tmb-tl-range');
+    if (range) {
+      const model = timelineModel();
+      const n = model ? model.months.length : 1;
+      const pos = (i) => ((i + 0.5) / n) * 100 + '%';
+      const live = () => {
+        const i = Number(range.value);
+        const lab = timelineLabel(model, i);
+        const zone = range.parentElement;
+        zone.querySelector('.tmb-tl-label').style.left = pos(i);
+        zone.querySelector('.tmb-tl-label').textContent = lab.thumb;
+        zone.querySelector('.tmb-tl-thumb').style.left = pos(i);
+        zone.querySelector('.tmb-tl-fill').style.width = pos(i);
+        const tl = range.closest('.tmb-tl');
+        tl.querySelector('.tmb-tl-date').textContent = lab.date;
+        tl.querySelector('.tmb-tl-status').textContent = lab.status;
+        placeTimelineLabel(zone);
+      };
+      range.addEventListener('input', live);
+      range.addEventListener('change', () => applyTimelineMonth(Number(range.value)));
+      placeTimelineLabel(range.parentElement);
+    }
   }
-  window.addEventListener('resize', () => {
-    const root = document.getElementById('tmb-root');
-    if (root) adjustShellHeight(root);
-  });
+  // L'étiquette du curseur reste dans le cadre près des bords.
+  function placeTimelineLabel(zone) {
+    const lab = zone.querySelector('.tmb-tl-label');
+    if (!lab) return;
+    lab.style.transform = 'translateX(-50%)';
+    const z = zone.getBoundingClientRect();
+    const r = lab.getBoundingClientRect();
+    if (r.right > z.right) lab.style.transform = 'translateX(calc(-100% + 10px))';
+    else if (r.left < z.left) lab.style.transform = 'translateX(-10px)';
+  }
+
+  function setSubtype(v) {
+    if (v === state.subtype) return;
+    state.subtype = v;
+    if (v !== 0) {
+      if (!state.filterRangeUserEdited) state.filterRange = DEFAULT_RANGE_BY_SUBTYPE[v] || '';
+      state.centralizeAccount = false;
+    } else {
+      state.filterRange = '';
+      state.filterRangeUserEdited = false;
+      state.aged = false;
+    }
+    state.selectedKeys = new Set();
+    loadBalance();
+  }
+
+  // Changement d'exercice : pilote le sélecteur natif « Exercice(s) » pour
+  // obtenir le dossier_revision_id de cet exercice (jamais recalculé).
+  async function selectFiscalYear(idx) {
+    if (idx < 0 || !state.fiscalYears[idx]) return;
+    state.startDate = state.fiscalYears[idx].start;
+    state.endDate = state.fiscalYears[idx].end;
+    state.loading = true;
+    state.error = null;
+    renderApp();
+    if (!titleBlockRef || !titleBlockRef.isConnected) titleBlockRef = findNativeTitleBlock();
+    const ok = await switchFiscalYear(idx);
+    if (!ok) {
+      state.loading = false;
+      state.error =
+        "Impossible de changer d'exercice automatiquement (le sélecteur natif « Exercice(s) » n'a pas répondu). " +
+        'Choisissez l\'exercice dans la balance MyUnisoft (sous cette fenêtre), puis rouvrez Balance Premium.';
+      renderApp();
+      return;
+    }
+    loadBalance();
+  }
 
   // -----------------------------------------------------------------------
   // 10. Écouteurs d'événements (délégation simple, on redessine tout à
@@ -2752,32 +3120,7 @@
       });
 
     const fyEl = $('#tmb-fiscal-year');
-    if (fyEl)
-      fyEl.addEventListener('change', async () => {
-        const idx = Number(fyEl.value);
-        if (idx < 0 || !state.fiscalYears[idx]) return;
-        state.startDate = state.fiscalYears[idx].start;
-        state.endDate = state.fiscalYears[idx].end;
-        state.loading = true;
-        state.error = null;
-        renderApp();
-        // Voir switchFiscalYear : chaque exercice a son propre
-        // dossier_revision_id côté serveur, qu'on ne peut récupérer qu'en
-        // laissant l'appli native le résoudre (sélecteur natif piloté en
-        // coulisses). Sans ce préalable, changer juste les dates rechargerait
-        // avec le MAUVAIS exercice — silencieusement, sans erreur — ce qui
-        // était le bug initial.
-        const ok = await switchFiscalYear(idx);
-        if (!ok) {
-          state.loading = false;
-          state.error =
-            "Impossible de changer d'exercice automatiquement (le sélecteur natif attendu n'a pas répondu). " +
-            'Réessayez, ou utilisez le sélecteur "Exercice(s)" natif dans la barre de titre puis "Affichage Nch".';
-          renderApp();
-          return;
-        }
-        loadBalance();
-      });
+    if (fyEl) fyEl.addEventListener('change', () => selectFiscalYear(Number(fyEl.value)));
 
     const bind = (id, key) => {
       const el = $(id);
@@ -3112,136 +3455,161 @@
     if (document.getElementById('tmb-css')) return;
     const style = document.createElement('style');
     style.id = 'tmb-css';
+    const MONO = MONO_FONT_STACK || 'Consolas, "Courier New", monospace';
+    // (v4.0) Charte Consultation Premium : bleu nuit #0f2a52, fond #eef2f8,
+    // cartes blanches, chiffres en Consolas, négatifs en rouge.
     style.textContent = `
       #tmb-root {
-        font-family: -apple-system, Segoe UI, Roboto, Arial, sans-serif; font-size: 12px; color: #1a1a2e;
-        width: 100%; text-align: left; display: block;
-        align-self: stretch; justify-self: stretch; flex: 1 1 auto; margin: 0;
+        position: fixed; left: 160px; top: 58px; right: 0; bottom: 0; z-index: 1190;
+        display: flex; flex-direction: column; background: #eef2f8; color: #1c2b44;
+        font-family: "Segoe UI", system-ui, Roboto, Arial, sans-serif; font-size: 13px; text-align: left;
+        box-shadow: -6px 0 18px rgba(15, 42, 82, .18); min-width: 0;
       }
       #tmb-root, #tmb-root * { box-sizing: border-box; }
-      .tmb-shell { display: grid; grid-template-columns: 260px 1fr; grid-template-rows: minmax(0, 1fr); height: calc(100vh - 80px); padding: 8px; width: 100%; text-align: left; align-items: stretch; justify-items: stretch; overflow: hidden; }
-      .tmb-options {
-        display: flex; flex-direction: column; align-items: stretch; gap: 10px; overflow-y: auto;
-        border-right: 1px solid #d0d5dd; padding-right: 10px; width: 100%; text-align: left; margin: 0;
-        position: sticky; top: 8px; min-height: 0; height: 100%;
+      #tmb-root .tmb-head { flex: 0 0 auto; display: flex; align-items: center; gap: 14px; padding: 12px 20px 8px; flex-wrap: wrap; }
+      #tmb-root .tmb-title { font-size: 20px; color: #0f2a52; font-weight: 600; white-space: nowrap; }
+      #tmb-root .tmb-pill { background: #0f2a52; color: #fff; font-size: 10px; font-weight: 700; letter-spacing: .08em; padding: 4px 10px; border-radius: 999px; white-space: nowrap; }
+      #tmb-root .tmb-info { color: #5b6b85; min-width: 0; }
+      #tmb-root .tmb-btn { border: 1px solid #b8c2cf; background: #fff; color: #0f2a52; border-radius: 6px; padding: 8px 14px; font: inherit; cursor: pointer; white-space: nowrap; }
+      #tmb-root .tmb-btn:hover { background: #f3f6fb; }
+      #tmb-root .tmb-btn-primary { background: #0f2a52; color: #fff; border-color: #0f2a52; font-weight: 600; }
+      #tmb-root .tmb-btn-primary:hover { background: #1b3a6b; }
+      #tmb-root .tmb-btn-x { width: 36px; padding: 8px 0; text-align: center; }
+      #tmb-root .tmb-shell { flex: 1 1 auto; min-height: 0; display: flex; gap: 12px; padding: 0 20px 12px; align-items: stretch; }
+      #tmb-root .tmb-options {
+        flex: 0 0 250px; overflow-y: auto; background: #fff; border: 1px solid #d5dce8; border-radius: 8px;
+        padding: 12px 14px; display: flex; flex-direction: column; gap: 10px;
       }
-      .tmb-toggle-btn {
-        font-size: 11px; padding: 5px 10px; border: 1px solid #38bdf8; border-radius: 6px; background: #38bdf8;
-        color: #fff; font-weight: 600; cursor: pointer; font-family: inherit; margin: 0 8px 0 0; flex-shrink: 0;
+      #tmb-root .tmb-main { flex: 1 1 auto; min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: 10px; }
+      #tmb-root .tmb-opt-group { display: flex; flex-direction: column; gap: 3px; }
+      #tmb-root .tmb-opt-group > label { font-size: 11px; color: #5b6b85; font-weight: 400; }
+      /* Du / Au l'un sous l'autre : un champ date tient mal en demi-largeur (250 px) */
+      #tmb-root .tmb-opt-row2 { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; }
+      #tmb-root .tmb-opt-group select, #tmb-root .tmb-opt-group input[type=text], #tmb-root .tmb-opt-group input[type=date] {
+        border: 1px solid #b8c2cf; border-radius: 6px; padding: 7px 9px; font: inherit; font-size: 13px; background: #fff; width: 100%; color: #1c2b44;
       }
-      /* Couleurs réelles posées en JS (applyToggleButtonColors), calquées sur le menu de
-         gauche : #38bdf8 ci-dessus n'est qu'un repli avant le premier calcul. Au survol,
-         un simple assombrissement générique (fonctionne quelle que soit la couleur du
-         menu, noir ou bleu). */
-      .tmb-toggle-btn:hover { filter: brightness(0.88); }
-      .tmb-opt-group { display: flex; flex-direction: column; align-items: stretch; gap: 3px; width: 100%; text-align: left; }
-      .tmb-opt-group label { font-weight: 500; font-size: 11px; color: #444; text-align: left; }
-      .tmb-opt-row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; width: 100%; }
-      .tmb-opt-group select, .tmb-opt-group input[type=text], .tmb-opt-group input[type=date] {
-        font-size: 12px; padding: 4px 6px; border: 1px solid #cbd5e1; border-radius: 4px; font-family: inherit;
-        width: 100%; text-align: left;
+      #tmb-root #tmb-range, #tmb-root #tmb-start, #tmb-root #tmb-end { font-family: ${MONO}; }
+      #tmb-root .tmb-seg { display: flex; border: 1px solid #b8c2cf; border-radius: 6px; overflow: hidden; }
+      #tmb-root .tmb-seg-btn { flex: 1; border: 0; background: #fff; color: #0f2a52; padding: 7px 4px; font: inherit; font-size: 12px; cursor: pointer; }
+      #tmb-root .tmb-seg-btn + .tmb-seg-btn { border-left: 1px solid #b8c2cf; }
+      #tmb-root .tmb-seg-btn.tmb-seg-on { background: #0f2a52; color: #fff; font-weight: 600; }
+      #tmb-root .tmb-opt-check-group { display: flex; flex-direction: column; gap: 6px; }
+      #tmb-root .tmb-opt-check-group-title { font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: #0f2a52; margin: 4px 0 2px; padding-bottom: 4px; border-bottom: 1px solid #e3e8f0; }
+      #tmb-root .tmb-opt-checks { display: flex; flex-direction: column; gap: 7px; }
+      #tmb-root .tmb-opt-checks label { display: flex; align-items: flex-start; gap: 7px; font-size: 13px; line-height: 1.3; cursor: pointer; margin: 0; }
+      #tmb-root .tmb-opt-checks input[type=checkbox] { margin: 2px 0 0; flex: 0 0 auto; accent-color: #0f2a52; }
+      #tmb-root .tmb-opt-checks label.tmb-opt-disabled { opacity: .5; cursor: not-allowed; }
+      #tmb-root .tmb-load-btn { margin-top: 4px; width: 100%; background: #0f2a52; color: #fff; border: 0; border-radius: 6px; padding: 9px; font: inherit; font-weight: 600; cursor: pointer; }
+      #tmb-root .tmb-load-btn:disabled { opacity: .6; cursor: progress; }
+      #tmb-root .tmb-link-btn { border: 0; background: transparent; color: #1b4f9c; text-decoration: underline; font: inherit; font-size: 12px; cursor: pointer; padding: 2px; }
+      #tmb-root .tmb-error { color: #b91c1c; font-size: 12px; word-break: break-word; }
+      #tmb-root .tmb-refresh-btn { margin-top: 6px; background: #b91c1c; color: #fff; border: 0; border-radius: 5px; padding: 5px 10px; font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; }
+
+      /* Curseur « Arrêté au » */
+      #tmb-root .tmb-tl { flex: 0 0 auto; background: #fff; border: 1px solid #d5dce8; border-radius: 8px; padding: 10px 18px 8px; }
+      #tmb-root .tmb-tl-head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; color: #0f2a52; }
+      #tmb-root .tmb-tl-date { font-family: ${MONO}; font-size: 15px; }
+      #tmb-root .tmb-tl-status { color: #5b6b85; font-size: 12px; }
+      #tmb-root .tmb-tl-hint { color: #5b6b85; font-size: 11px; }
+      #tmb-root .tmb-tl-hint b { font-family: ${MONO}; color: #1b4f9c; }
+      #tmb-root .tmb-tl-zone { position: relative; height: 58px; margin: 4px 4px 0; }
+      #tmb-root .tmb-tl-track, #tmb-root .tmb-tl-ex, #tmb-root .tmb-tl-fill { position: absolute; top: 27px; height: 4px; border-radius: 2px; }
+      #tmb-root .tmb-tl-track { left: 0; right: 0; background: #d5dce8; }
+      #tmb-root .tmb-tl-ex { background: #9db4d8; }
+      #tmb-root .tmb-tl-fill { left: 0; background: #0f2a52; }
+      #tmb-root .tmb-tl-tick { position: absolute; top: 32px; width: 0; }
+      #tmb-root .tmb-tl-tick i { display: block; width: 1px; background: #8a9bb8; margin: 0 auto; }
+      #tmb-root .tmb-tl-tick span { display: block; margin-top: 2px; font-size: 10px; color: #5b6b85; white-space: nowrap; transform: translateX(-50%); }
+      #tmb-root .tmb-tl-label { position: absolute; top: 0; transform: translateX(-50%); background: #0f2a52; color: #fff; font-size: 11px; font-weight: 700; border-radius: 4px; padding: 2px 7px; white-space: nowrap; pointer-events: none; }
+      #tmb-root .tmb-tl-thumb { position: absolute; top: 21px; transform: translateX(-50%); width: 16px; height: 16px; border-radius: 50%; background: #f0b400; border: 3px solid #fff; box-shadow: 0 0 0 1px #0f2a52; pointer-events: none; }
+      #tmb-root #tmb-tl-range { position: absolute; left: -8px; width: calc(100% + 16px); top: 18px; height: 24px; margin: 0; opacity: 0; cursor: ew-resize; }
+      #tmb-root #tmb-tl-range:focus-visible ~ .tmb-tl-thumb, #tmb-root #tmb-tl-range:focus ~ .tmb-tl-thumb { box-shadow: 0 0 0 1px #0f2a52, 0 0 0 4px #6a9be0; }
+
+      /* Bandeaux */
+      #tmb-root .tmb-bars { flex: 0 0 auto; display: flex; gap: 12px; flex-wrap: wrap; align-items: stretch; }
+      #tmb-root .tmb-bar { background: #0f2a52; color: #fff; border-radius: 8px; padding: 11px 16px; min-height: 46px; line-height: 22px; display: flex; gap: 26px; align-items: center; flex-wrap: wrap; font-size: 12px; }
+      #tmb-root .tmb-bar span { white-space: nowrap; }
+      #tmb-root .tmb-bar b { font-family: ${MONO}; font-size: 15px; margin-left: 4px; }
+      #tmb-root .tmb-bar .tmb-bar-count b { font-family: inherit; font-size: 12px; margin-left: 0; }
+      #tmb-root .tmb-bar .tmb-bar-neg { color: #ffb4b4; }
+      #tmb-root .tmb-bar-sel { background: #fff4cc; color: #0f2a52; border: 1px solid #f0d78a; }
+      #tmb-root .tmb-bar-sel .tmb-bar-neg { color: #c62828; }
+      #tmb-root .tmb-bar-sel span:first-child b { font-family: inherit; font-size: 12px; margin-left: 0; }
+
+      /* Tableau */
+      #tmb-root .tmb-table-wrap { flex: 1 1 auto; min-height: 0; overflow: auto; background: #fff; border: 1px solid #d5dce8; border-radius: 8px; }
+      #tmb-root .tmb-empty { padding: 30px; text-align: center; color: #5b6b85; }
+      /* separate + border-spacing:0 : collapse casse le sticky des en-têtes ;
+         pas de width:100% (colonnes étirées sur grand écran). */
+      #tmb-root table.tmb-table { border-collapse: separate; border-spacing: 0; table-layout: fixed; font-size: 13px; }
+      #tmb-root .tmb-table th, #tmb-root .tmb-table td {
+        border-right: 1px solid #c3cddd; border-bottom: 1px solid #c3cddd; padding: 6px 8px; height: 30px; line-height: 18px;
+        vertical-align: middle; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
       }
-      .tmb-opt-check-group { width: 100%; margin-top: 8px; }
-      .tmb-opt-check-group-title { font-weight: 700; font-size: 11px; color: #10203e; text-align: left; text-transform: uppercase; letter-spacing: .02em; margin-bottom: 4px; }
-      .tmb-opt-checks { display: flex !important; flex-direction: column !important; align-items: stretch !important; gap: 6px; margin: 4px 0 0 0; width: 100%; text-align: left !important; }
-      .tmb-opt-checks label {
-        display: flex !important; flex-direction: row !important; align-items: center !important; justify-content: flex-start !important;
-        gap: 6px; font-size: 11px; cursor: pointer; text-align: left !important; width: 100%; margin: 0 !important;
-      }
-      .tmb-opt-checks input[type=checkbox] { margin: 0 !important; flex: 0 0 auto; }
-      .tmb-opt-checks label.tmb-opt-disabled { opacity: .45; cursor: not-allowed !important; }
-      .tmb-opt-checks label.tmb-opt-disabled input[type=checkbox] { cursor: not-allowed !important; }
-      .tmb-load-btn { margin-top: 8px; width: 100%; background: #10203e; color: #fff; border: none; border-radius: 6px; padding: 10px; font-size: 13px; font-weight: 600; cursor: pointer; text-align: center; }
-      .tmb-load-btn:disabled { opacity: .6; cursor: default; }
-      .tmb-error { color: #b91c1c; font-size: 11px; margin-top: 6px; text-align: left; word-break: break-word; }
-      .tmb-refresh-btn { margin-top: 6px; background: #b91c1c; color: #fff; border: none; border-radius: 5px; padding: 5px 10px; font-size: 11px; font-weight: 600; cursor: pointer; font-family: inherit; }
-      .tmb-refresh-btn:hover { background: #991b1b; }
-      .tmb-table-wrap { overflow: auto; border: 1px solid #d0d5dd; border-radius: 6px; min-height: 0; height: 100%; align-self: stretch; text-align: left; }
-      .tmb-empty { padding: 24px; text-align: center; color: #667; }
-      /* border-collapse:collapse casse position:sticky sur les <th> dans Chrome
-         (bug connu) — d'où separate + border-spacing:0 pour garder le rendu
-         visuel identique (les cellules n'ont de toute façon qu'une bordure
-         droite/basse chacune, pas de double-bordure à craindre).
-         Pas de width:100% sur la table : sur un écran très large (ultra-wide),
-         ça forçait la table à s'étirer sur toute la largeur du panneau de
-         droite, avec du coup un grand espace ajouté dans chaque colonne pour
-         combler — même avec table-layout:fixed, une table à 100% redistribue
-         l'espace restant entre les colonnes plutôt que de le laisser en
-         blanc. Sans width, la table ne prend que la somme des largeurs de
-         colonnes (fixes, ou ajustées manuellement via le glisser de bordure)
-         et reste collée à gauche, comme n'importe quel élément de bloc par
-         défaut — le panneau garde sa largeur mais l'espace en trop reste
-         vide à droite du tableau plutôt que d'écarteler les colonnes. */
-      table.tmb-table { border-collapse: separate; border-spacing: 0; table-layout: fixed; }
-      .tmb-table th, .tmb-table td { border-right: 1px solid #e2e8f0; border-bottom: 1px solid #eef1f5; padding: 4px 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-      .tmb-table th:last-child, .tmb-table td:last-child { border-right: none; }
-      .tmb-head-row th, .tmb-filter-row th {
-        position: sticky; background: #fff; z-index: 3; font-weight: 600; text-align: left;
-      }
-      .tmb-head-row th { top: 0; z-index: 4; border-bottom: 2px solid #94a3b8; position: sticky; }
-      .tmb-filter-row th { top: 27px; z-index: 3; padding: 2px 4px; }
-      /* NB : pas de position:relative ici — .tmb-head-row th / .tmb-filter-row th
-         sont déjà en position:sticky plus haut, ce qui suffit comme contexte de
-         positionnement pour la poignée de redimensionnement (.tmb-col-resizer,
-         en absolute) ; un position:relative ici écraserait ce sticky (même
-         spécificité CSS, règle plus tardive = priorité) et empêcherait l'en-tête
-         et la ligne de filtres de rester fixes au défilement du tableau. */
-      .tmb-th-label { pointer-events: none; }
-      /* Le bouton d'export vit dans .tmb-th-label (pointer-events:none) : il
-         doit reprendre la main lui-même pour rester cliquable. */
-      .tmb-export-btn {
-        pointer-events: auto; display: inline-flex; align-items: center; justify-content: center;
-        width: 20px; height: 20px; padding: 0; border: none; background: transparent; cursor: pointer;
-        border-radius: 3px;
-      }
-      .tmb-export-btn:hover { background: rgba(29, 111, 66, 0.15); }
-      .tmb-col-resizer {
-        position: absolute; top: 0; right: -3px; width: 7px; height: 100%; cursor: col-resize; z-index: 5;
-        user-select: none; touch-action: none;
-      }
-      .tmb-col-resizer:hover { background: rgba(56, 189, 248, 0.4); }
-      .tmb-sortable { cursor: pointer; user-select: none; }
-      /* Icones de tri (▲▼) retirees a la demande (2026-07-30) - le tri au clic
-         sur l'entete reste fonctionnel, seul l'indicateur visuel disparait. */
-      .tmb-sort-asc::after { content: none; }
-      .tmb-sort-desc::after { content: none; }
-      .tmb-filter-input { width: 100%; box-sizing: border-box; font-size: 10px; padding: 2px 4px; border: 1px solid #cbd5e1; border-radius: 4px; font-family: inherit; }
-      .tmb-mono { font-family: 'Courier New', monospace; font-variant-numeric: tabular-nums; }
-      .tmb-negative { color: #dc2626; }
-      .tmb-expand-cell { cursor: default; }
-      .tmb-expand-toggle { cursor: pointer; display: inline-block; width: 14px; }
-      .tmb-select-checkbox { cursor: pointer; margin: 0; vertical-align: middle; }
-      .tmb-acct-link { color: inherit; cursor: pointer; text-decoration: none; }
-      .tmb-acct-link:hover { text-decoration: underline; }
-      .tmb-pj-link, .tmb-com-link { cursor: pointer; display: inline-block; }
-      .tmb-pj-link-empty, .tmb-com-link-empty { opacity: 0.35; }
-      .tmb-pj-link:hover, .tmb-com-link:hover { opacity: 1; transform: scale(1.1); }
+      #tmb-root .tmb-head-row th { position: sticky; top: 0; z-index: 4; height: 34px; background: #f3f6fb; color: #0f2a52; font-weight: 600; font-size: 12px; border-bottom: 1px solid #aebbd0; }
+      #tmb-root .tmb-filter-row th { position: sticky; top: 34px; z-index: 3; height: 32px; padding: 3px; background: #fbfcfe; border-bottom: 1px solid #aebbd0; }
+      #tmb-root .tmb-th-label { pointer-events: none; }
+      #tmb-root .tmb-col-resizer { position: absolute; top: 0; right: -3px; width: 7px; height: 100%; cursor: col-resize; z-index: 5; user-select: none; }
+      #tmb-root .tmb-col-resizer:hover { background: #6a9be0; }
+      #tmb-root .tmb-sortable { cursor: pointer; user-select: none; }
+      #tmb-root .tmb-sortable:hover { background: #e4ecfa; }
+      /* pas d'indicateur de tri (retiré à la demande de Nicolas le 2026-07-30) */
+      #tmb-root .tmb-filter-input { width: 100%; min-width: 0; border: 1px solid #b8c2cf; border-radius: 4px; padding: 4px 6px; font: inherit; font-size: 12px; background: #fff; }
+      #tmb-root .tmb-mono, #tmb-root .tmb-table td[style*="right"] { font-family: ${MONO}; font-variant-numeric: tabular-nums; }
+      #tmb-root .tmb-table td[data-col="account_number"] { font-family: ${MONO}; }
+      #tmb-root .tmb-negative { color: #c62828; }
+      #tmb-root .tmb-expand-toggle { cursor: pointer; display: inline-block; width: 14px; color: #1b4f9c; }
+      #tmb-root .tmb-select-checkbox { cursor: pointer; margin: 0; vertical-align: middle; accent-color: #0f2a52; }
+      #tmb-root .tmb-acct-link { color: #1b4f9c; cursor: pointer; text-decoration: underline; }
+      #tmb-root td[data-col="solde_n"] .tmb-acct-link, #tmb-root td[data-col="solde_n1"] .tmb-acct-link,
+      #tmb-root td[data-col^="debit"] .tmb-acct-link, #tmb-root td[data-col^="credit"] .tmb-acct-link,
+      #tmb-root td[data-col="var_eur"] .tmb-acct-link { color: inherit; text-decoration: none; }
+      #tmb-root td .tmb-acct-link:hover { text-decoration: underline; }
+      #tmb-root .tmb-pj-link { cursor: pointer; color: #1b4f9c; }
+      #tmb-root .tmb-com-link { cursor: pointer; display: inline-block; min-width: 18px; padding: 0 5px; border-radius: 9px; background: #e4ecfa; color: #1b4f9c; font-size: 11px; font-weight: 700; line-height: 16px; }
+      #tmb-root .tmb-valid { display: inline-block; min-width: 22px; padding: 0 3px; border-radius: 4px; font-size: 10px; font-weight: 700; line-height: 16px; background: #f1f4f8; color: #8792a6; }
+      #tmb-root .tmb-valid-ok { background: #dcfce7; color: #166534; }
+      #tmb-root .tmb-table tbody tr { background: #fff; }
+      #tmb-root .tmb-table tbody tr:nth-child(even) { background: #f8fafd; }
+      #tmb-root .tmb-table tbody tr:hover { background: #eef4ff; }
+      #tmb-root .tmb-table tbody tr:has(.tmb-select-checkbox:checked) { background: #dbe8fb; }
+      #tmb-root .tmb-table tbody tr.tmb-subtotal-row { background: #e8eef8 !important; color: #0f2a52; font-weight: 700; }
+      #tmb-root .tmb-table tbody tr.tmb-subtotal-row td { border-top: 1px solid #8aa0c4; }
+      #tmb-root .tmb-table tbody tr[data-key^="__result__"] { background: #dbe5f5 !important; color: #0f2a52; font-weight: 700; }
+      #tmb-root .tmb-table tbody tr[data-key^="__result__"]:last-child { background: #b4c6e7 !important; }
+      #tmb-root .tmb-table tbody tr[data-key^="__result__"] td { border-top: 2px solid #0f2a52; }
+      #tmb-root .tmb-hints { flex: 0 0 auto; font-size: 12px; color: #5b6b85; display: flex; gap: 18px; flex-wrap: wrap; }
+      #tmb-root .tmb-hints b { font-family: ${MONO}; color: #1b4f9c; }
+
+      /* Info-bulles PJ / commentaires */
       .tmb-popover {
-        position: absolute; z-index: 100000; background: #fff; border: 1px solid #cbd5e1;
-        border-radius: 8px; box-shadow: 0 6px 20px rgba(0,0,0,0.18); min-width: 220px; max-width: 340px;
-        max-height: 320px; overflow-y: auto; font-size: 12px; font-family: inherit;
+        position: absolute; z-index: 100000; background: #fff; border: 1px solid #aebbd0;
+        border-radius: 8px; box-shadow: 0 8px 24px rgba(15,42,82,.25); min-width: 220px; max-width: 360px;
+        max-height: 320px; overflow-y: auto; font-size: 12px; font-family: "Segoe UI", system-ui, Arial, sans-serif; color: #1c2b44;
       }
-      .tmb-popover-title {
-        font-weight: 700; font-size: 12px; padding: 8px 10px; border-bottom: 1px solid #e5e7eb;
-        background: #f8fafc; border-radius: 8px 8px 0 0; position: sticky; top: 0;
-      }
+      .tmb-popover-title { font-weight: 700; font-size: 12px; padding: 8px 10px; border-bottom: 1px solid #e3e8f0; background: #f3f6fb; color: #0f2a52; border-radius: 8px 8px 0 0; position: sticky; top: 0; }
       .tmb-popover-body { padding: 8px 10px; }
-      .tmb-popover-empty { color: #64748b; font-style: italic; }
+      .tmb-popover-empty { color: #5b6b85; font-style: italic; }
       .tmb-popover-list { list-style: none; margin: 0; padding: 0; }
-      .tmb-popover-list li { padding: 6px 0; border-bottom: 1px solid #f1f5f9; }
+      .tmb-popover-list li { padding: 6px 0; border-bottom: 1px solid #eef1f6; }
       .tmb-popover-list li:last-child { border-bottom: none; }
-      .tmb-popover-meta { color: #94a3b8; font-size: 10px; margin-left: 6px; }
-      .tmb-popover-open { color: #0369a1; text-decoration: none; }
+      .tmb-popover-meta { color: #8792a6; font-size: 10px; margin-left: 6px; }
+      .tmb-popover-open { color: #1b4f9c; text-decoration: none; }
       .tmb-popover-open:hover { text-decoration: underline; }
-      .tmb-popover-comment-head { font-weight: 600; color: #334155; }
-      .tmb-popover-comment-body { color: #475569; margin-top: 2px; }
+      .tmb-popover-comment-head { font-weight: 600; color: #0f2a52; }
+      .tmb-popover-comment-body { color: #3b4a63; margin-top: 2px; }
       .tmb-popover-comment-body p { margin: 0 0 4px 0; }
-      .tmb-popover-comment-body p:last-child { margin-bottom: 0; }
       .tmb-popover-comment-body ul, .tmb-popover-comment-body ol { margin: 0 0 4px 18px; padding: 0; }
-      .tmb-table tbody tr:nth-child(even) { background: #fafbfc; }
-      .tmb-table tbody tr:hover { background: #eef4ff; }
-      .tmb-table tbody tr.tmb-subtotal-row { font-weight: 700; background: #f1f5f9 !important; }
-      .tmb-table tbody tr[data-key="__result__"] { position: sticky; bottom: 0; }
+
+      /* Impression : seulement le tableau de Balance Premium */
+      @media print {
+        body > *:not(#tmb-root) { display: none !important; }
+        #tmb-root { position: static !important; box-shadow: none; background: #fff; }
+        #tmb-root .tmb-options, #tmb-root .tmb-tl, #tmb-root .tmb-hints, #tmb-root .tmb-btn, #tmb-root .tmb-filter-row { display: none !important; }
+        #tmb-root .tmb-shell { display: block; padding: 0; }
+        #tmb-root .tmb-table-wrap { overflow: visible; border: 0; }
+        #tmb-root .tmb-head-row th { position: static; }
+      }
     `;
     document.head.appendChild(style);
   }
@@ -3269,8 +3637,6 @@
       // blocs natifs pour repartir sur une base propre.
       const root = document.getElementById('tmb-root');
       if (root) root.remove();
-      const toggleBtn = document.getElementById('tmb-toggle-btn');
-      if (toggleBtn) toggleBtn.remove();
       restoreNativeBlocks();
       titleBlockRef = null;
       customActive = readBalanceMode();
@@ -3351,10 +3717,11 @@
       onNativeClick: onNativeBalanceClick,
     });
     if (isDisabled()) return;
-    if (!titleBlockRef) return;
-    checkNativeSubtype(titleBlockRef);
-    repositionToggleButton(titleBlockRef);
-    maskNativeAgedCheckbox(titleBlockRef);
+    // (v4.0) Plus de synchronisation avec les contrôles natifs ni de bouton
+    // dans la barre native : la surimpression a ses propres réglages. On la
+    // garde simplement calée sur la zone de contenu (menu replié/déplié).
+    const root = document.getElementById('tmb-root');
+    if (root && root.style.display !== 'none') placeOverlay(root);
   }
 
   registerScan(scanBalance);

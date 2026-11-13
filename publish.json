@@ -2,16 +2,21 @@
   "minExtensionVersion": "1.1.0",
   "licenceRequired": true,
   "release": {
-    "version": "1.1.0",
-    "date": "2026-11-12",
+    "version": "1.2.0",
+    "date": "2026-11-13",
     "notes": [
-      "Nouvelles entrées de menu (Tenue) : « Balance Premium » sous Balance, « Grand Livre Premium » sous Grand livre, « Consultation Premium » sous Consultation.",
-      "Chaque fonctionnalité s'active ou se désactive depuis l'icône de l'extension (barre de Chrome).",
-      "Le bouton PREMIUM de la barre du haut est supprimé ; le statut MyUnisoft (météo) est désactivé par défaut.",
-      "Dossier de révision : les cycles s'affichent en pastilles dès l'onglet « Tableau de bord »."
+      "Balance Premium entièrement revue : elle s'ouvre par-dessus la balance MyUnisoft (qui reste intacte dessous), avec la même présentation que Consultation Premium.",
+      "Curseur « Arrêté au » : glisser pour choisir la fin de mois (fin d'exercice par défaut) ; le tableau se recharge tout seul.",
+      "Bandeau des totaux (comptes affichés, débit, crédit, résultat) et total des comptes cochés.",
+      "Colonnes simplifiées : Var % au survol de Var €, validation C / RM en une colonne, PJ seulement s'il y en a, colonnes N-1 masquables.",
+      "Vos options d'affichage sont mémorisées pour chaque dossier ; Échap ou ✕ revient à la balance MyUnisoft.",
+      "Consultation Premium : retour au compte précédent (Retour arrière), numéros de ligne, colonne Lettrage entre Débit et Crédit."
     ]
   },
-  "defaultMatches": ["https://connect.lgassocies.com/*", "https://*.myunisoft.fr/*"],
+  "defaultMatches": [
+    "https://connect.lgassocies.com/*",
+    "https://*.myunisoft.fr/*"
+  ],
   "order": [
     "socle",
     "premium",
@@ -27,49 +32,145 @@
     "consult-filtre",
     "consult-premium"
   ],
-  "required": ["socle", "premium", "grand-livre"],
+  "required": [
+    "socle",
+    "premium",
+    "grand-livre"
+  ],
   "dependencies": {
-    "consult-premium": ["grand-livre"],
-    "consult-filtre": ["grand-livre"]
+    "consult-premium": [
+      "grand-livre"
+    ],
+    "consult-filtre": [
+      "grand-livre"
+    ]
   },
   "catalog": [
     {
       "group": "Affichage Premium",
       "items": [
-        { "type": "setting", "id": "centerLayout", "label": "Centrage du contenu sur grand écran", "default": true },
-        { "type": "setting", "id": "gridLines", "label": "Lignes de séparation dans les tableaux", "default": true },
-        { "type": "setting", "id": "monoFont", "label": "Chiffres en police à chasse fixe (Consolas)", "default": true },
-        { "type": "module", "id": "revision", "label": "Dossier de révision : cycles en pastilles", "default": true },
-        { "type": "module", "id": "solde-comptes", "label": "Solde des comptes dans la recherche de compte", "default": true },
-        { "type": "setting", "id": "showStatus", "label": "Statut MyUnisoft (météo) dans le menu", "default": false }
+        {
+          "type": "setting",
+          "id": "centerLayout",
+          "label": "Centrage du contenu sur grand écran",
+          "default": true
+        },
+        {
+          "type": "setting",
+          "id": "gridLines",
+          "label": "Lignes de séparation dans les tableaux",
+          "default": true
+        },
+        {
+          "type": "setting",
+          "id": "monoFont",
+          "label": "Chiffres en police à chasse fixe (Consolas)",
+          "default": true
+        },
+        {
+          "type": "module",
+          "id": "revision",
+          "label": "Dossier de révision : cycles en pastilles",
+          "default": true
+        },
+        {
+          "type": "module",
+          "id": "solde-comptes",
+          "label": "Solde des comptes dans la recherche de compte",
+          "default": true
+        },
+        {
+          "type": "setting",
+          "id": "showStatus",
+          "label": "Statut MyUnisoft (météo) dans le menu",
+          "default": false
+        }
       ]
     },
     {
       "group": "Balance Premium",
-      "items": [{ "type": "module", "id": "balance", "label": "Balance Premium (menu Tenue, sous Balance)", "default": true }]
+      "items": [
+        {
+          "type": "module",
+          "id": "balance",
+          "label": "Balance Premium (menu Tenue, sous Balance)",
+          "default": true
+        }
+      ]
     },
     {
       "group": "Grand Livre Premium",
-      "items": [{ "type": "setting", "id": "glPremium", "label": "Grand Livre Premium (menu Tenue, sous Grand livre)", "default": true }]
+      "items": [
+        {
+          "type": "setting",
+          "id": "glPremium",
+          "label": "Grand Livre Premium (menu Tenue, sous Grand livre)",
+          "default": true
+        }
+      ]
     },
     {
       "group": "Consultation Premium",
-      "items": [{ "type": "module", "id": "consult-premium", "label": "Consultation Premium (menu Tenue, sous Consultation)", "default": true }]
+      "items": [
+        {
+          "type": "module",
+          "id": "consult-premium",
+          "label": "Consultation Premium (menu Tenue, sous Consultation)",
+          "default": true
+        }
+      ]
     },
     {
       "group": "Fenêtres",
-      "items": [{ "type": "setting", "id": "maximizeConsultWindow", "label": "Agrandir les fenêtres popup (consultation, MyU Vision…)", "default": true }]
+      "items": [
+        {
+          "type": "setting",
+          "id": "maximizeConsultWindow",
+          "label": "Agrandir les fenêtres popup (consultation, MyU Vision…)",
+          "default": true
+        }
+      ]
     },
     {
       "group": "Autres modules (désactivés par défaut)",
       "collapsed": true,
       "items": [
-        { "type": "module", "id": "menus", "label": "Menu latéral (icône active, infobulles, Écosystème)", "default": false },
-        { "type": "module", "id": "consultation", "label": "Fenêtre de consultation scindée 50/50", "default": false },
-        { "type": "module", "id": "suivi-semaine", "label": "Suivi de vos sociétés (Semaine)", "default": false },
-        { "type": "module", "id": "saisie", "label": "Saisie (nouvelle écriture)", "default": false },
-        { "type": "module", "id": "saisie-premium", "label": "Saisie Premium", "default": false },
-        { "type": "module", "id": "consult-filtre", "label": "Consultation : filtre de comptes non lettrés", "default": false }
+        {
+          "type": "module",
+          "id": "menus",
+          "label": "Menu latéral (icône active, infobulles, Écosystème)",
+          "default": false
+        },
+        {
+          "type": "module",
+          "id": "consultation",
+          "label": "Fenêtre de consultation scindée 50/50",
+          "default": false
+        },
+        {
+          "type": "module",
+          "id": "suivi-semaine",
+          "label": "Suivi de vos sociétés (Semaine)",
+          "default": false
+        },
+        {
+          "type": "module",
+          "id": "saisie",
+          "label": "Saisie (nouvelle écriture)",
+          "default": false
+        },
+        {
+          "type": "module",
+          "id": "saisie-premium",
+          "label": "Saisie Premium",
+          "default": false
+        },
+        {
+          "type": "module",
+          "id": "consult-filtre",
+          "label": "Consultation : filtre de comptes non lettrés",
+          "default": false
+        }
       ]
     }
   ],
