@@ -1,8 +1,10 @@
 // ==UserScript==
 // @name         MyUnisoft - Consultation Premium (page de consultation de compte maison)
 // @namespace    https://nicolas.chassard/myunisoft
-// @version      2.20-ext
-// @description  v2.20 (2026-11-13, demandé par Nicolas) : (1) filtre « Comptes d'attente et transitoires (47 et 58) » dans
+// @version      2.21-ext
+// @description  v2.21 (2026-11-13, demandé par Nicolas) : Taux TVA — si l'écriture porte à la fois du 4456 et du 4452 ou
+//               4457 (autoliquidation), seule la TVA déductible (4456) entre dans le calcul ; sinon toutes les TVA.
+//               v2.20 (2026-11-13, demandé par Nicolas) : (1) filtre « Comptes d'attente et transitoires (47 et 58) » dans
 //               Comptes généraux ; (2) barre chronologique « Arrêté au » (exercices N et N+1, libellés MyUnisoft) entre la
 //               ligne Compte et la ligne Lettrage : le curseur fixe la date de fin ; (3) commentaire permanent avant
 //               l'annuel, PJ Permanent à droite du commentaire permanent et PJ DR à droite de l'annuel ; (4) colonne
@@ -989,12 +991,17 @@
     if (!cpEligible(l)) return null;
     const lines = entCache.get(l.entryId);
     if (!lines || !lines.length) return null;
-    let tva = 0, ht = 0;
+    let tva = 0, ht = 0, ded = 0, due = 0;
     lines.forEach((x) => {
       const m = Math.abs((x.d || 0) - (x.c || 0));
-      if (/^445/.test(x.num)) tva += m;
+      if (/^4456/.test(x.num)) ded += m;
+      else if (/^445[27]/.test(x.num)) due += m;
+      else if (/^445/.test(x.num)) tva += m;
       else if (/^[267]/.test(x.num)) ht += m;
     });
+    // (v2.21) 4456 avec 4452 ou 4457 dans la même écriture = autoliquidation : la TVA n'est comptée
+    // qu'une fois (côté déductible) ; sinon toutes les TVA de l'écriture sont additionnées.
+    tva += ded && due ? ded : ded + due;
     if (!ht) return null;
     return r2((tva / ht) * 100);
   }
