@@ -1,8 +1,10 @@
 // ==UserScript==
 // @name         MyUnisoft - Consultation Premium (page de consultation de compte maison)
 // @namespace    https://nicolas.chassard/myunisoft
-// @version      2.15-ext
-// @description  v2.15 (2026-11-13, retour de Nicolas) : lignes lues dans le grand livre (filtres Fournisseurs /
+// @version      2.16-ext
+// @description  v2.16 (2026-11-13) : largeur fixe = zone de contenu native (.pageContent) au lieu de suivre le tableau ;
+//               Imprimer dans une fenêtre dédiée (page blanche avec la feuille de style de l'appli).
+//               v2.15 (2026-11-13, retour de Nicolas) : lignes lues dans le grand livre (filtres Fournisseurs /
 //               Clients…) : la colonne « Pièce jointe » du classeur était prise pour la colonne « Pièce » (même début
 //               de libellé) -> le lien s'affichait dans Pièce et l'icône PJ manquait. En-tête reconnu en premier ;
 //               icône PJ affichée, survol = aperçu de la pièce (<lien GED>/preview), clic = ouverture.
@@ -683,15 +685,7 @@
     if (t) t.style.width = COLS.reduce((x, c) => x + c.w, 0) + 'px';
     const bar = p.querySelector('[data-bar]');
     if (bar) bar.style.width = (COLS.reduce((x, c) => x + c.w, 0) + 2) + 'px';
-    // (v2.13) Imprimer / Export Excel / ✕ alignés sur le bord droit du tableau (colonne « Saisi par »)
-    const head = p.querySelector('[data-head]');
-    if (head) head.style.width = (COLS.reduce((x, c) => x + c.w, 0) + 2 + 40) + 'px';
-    // (v2.14) cadre du tableau et bloc de sélection limités à la largeur du tableau (grand écran)
-    const W2 = COLS.reduce((x, c) => x + c.w, 0) + 2;
-    const tw = p.querySelector('[data-twrap]');
-    if (tw) tw.style.maxWidth = W2 + 'px';
-    const sb = p.querySelector('[data-selbox]');
-    if (sb) sb.style.maxWidth = Math.max(W2, 1000) + 'px';
+    // (v2.16) largeur fixe = zone de contenu native (cf. placePanel) : plus d'ajustement au tableau
   }
 
   const CLIP = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle" aria-hidden="true"><path d="M21 11l-8.5 8.5a5 5 0 0 1-7-7L14 4a3.5 3.5 0 0 1 5 5l-8.6 8.6a2 2 0 0 1-3-3L15 7"/></svg>';
@@ -1321,8 +1315,54 @@
       return r.width > 0 && r.top < 90;
     });
     const top = home ? Math.round(home.getBoundingClientRect().bottom + 8) : 58;
+    // (2026-11-13) largeur fixe = zone de contenu native (.pageContent, centrée sur grand écran
+    // par Affichage Premium) : la fenêtre ne change plus de largeur selon le tableau.
+    const pcEl = document.querySelector('.pageContent');
+    const pcR = pcEl && pcEl.getBoundingClientRect();
+    const rightPx = pcR && pcR.width > 200 && pcR.right > left + 300 ? Math.max(0, Math.round(window.innerWidth - pcR.right)) : 0;
     p.style.left = left + 'px';
     p.style.top = top + 'px';
+    p.style.right = rightPx + 'px';
+  }
+
+  // (2026-11-13) Impression dans une fenêtre dédiée : la feuille de style de
+  // l'appli masquait tout le contenu à l'impression (page blanche). On y
+  // recopie le titre, le bandeau et le tableau affichés, sans les champs.
+  function printInWindow(title, info, nodes) {
+    const w = window.open('', 'tmb-print-window', 'width=1200,height=900,resizable=yes,scrollbars=yes');
+    if (!w) return;
+    const esc2 = (x) => String(x == null ? '' : x).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const parts = nodes
+      .filter(Boolean)
+      .map((n) => {
+        const c = n.cloneNode(true);
+        c.querySelectorAll('input, select, button, .tmb-filter-row, .tmb-col-resizer, .tmb-expand-toggle').forEach((e) => e.remove());
+        c.querySelectorAll('[style*="sticky"]').forEach((e) => (e.style.position = 'static'));
+        return c.outerHTML;
+      })
+      .join('');
+    w.document.open();
+    w.document.write(
+      '<!doctype html><html><head><meta charset="utf-8"><title>' + esc2(title) + '</title><style>' +
+        'body{font-family:"Segoe UI",Arial,sans-serif;font-size:10px;color:#1c2b44;margin:12mm}' +
+        'h1{font-size:15px;margin:0 0 2px;color:#0f2a52}.info{color:#5b6b85;margin:0 0 8px}' +
+        'table{border-collapse:collapse;width:auto;table-layout:auto}th,td{border:1px solid #c3cddd;padding:2px 5px;white-space:nowrap;position:static!important;background:none}' +
+        'th{background:#f3f6fb;text-align:left}td.n,td[style*="right"]{text-align:right;font-family:Consolas,monospace}' +
+        '.neg,.tmb-negative,td.neg,td.cr{color:#c62828}tr.acc td,tr.tot td,tr.sub td,.tmb-subtotal-row td,tr.gt td{font-weight:700;background:#eef2f8}' +
+        'td.com,td.acom{white-space:normal}svg{width:11px;height:11px}' +
+        '.tmb-bars,.glp-bar,.tmb-bar{display:flex;gap:18px;margin:0 0 6px;font-weight:600}' +
+        '@page{size:landscape;margin:10mm}' +
+        '</style></head><body><h1>' + esc2(title) + '</h1><div class="info">' + esc2(info) + '</div>' + parts + '</body></html>'
+    );
+    w.document.close();
+    setTimeout(() => {
+      try {
+        w.focus();
+        w.print();
+      } catch (e) {
+        /* ignore */
+      }
+    }, 400);
   }
 
   function showPanel() {
@@ -1447,7 +1487,7 @@
       if (a) {
         const act = a.dataset.act;
         if (act === 'close') closePanel();
-        else if (act === 'print') window.print();
+        else if (act === 'print') { const pp = document.getElementById(PANEL_ID); printInWindow('Consultation de compte', (pp.querySelector('[data-info]') || {}).textContent || '', [pp.querySelector('[data-bar]'), pp.querySelector('table')]); }
         else if (act === 'xlsx') exportXlsx();
         else if (act === 'back') goBackAccount();
         else if (act === 'prev') stepAccount(-1);

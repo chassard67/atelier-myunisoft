@@ -1,8 +1,16 @@
 // ==UserScript==
 // @name         MyUnisoft - Grand livre à l'écran
 // @namespace    https://nicolas.chassard/myunisoft
-// @version      2.3-ext
-// @description  v2.3 (2026-11-13, retours de Nicolas) : (1) colonne PJ plus masquée (place réservée à la barre de
+// @version      2.4-ext
+// @description  v2.4 (2026-11-13, retours de Nicolas) : (1) commentaires de compte (lus par GET /comments?account_id=
+//               pour les comptes marqués hasComment dans la balance, le classeur ne les contenant pas) affichés dans
+//               l'en-tête du compte, colonne Commentaire ; (2) plus de bande vide à droite : l'Intitulé prend la place
+//               restante ; (3) passage en Clients / Fournisseurs (ou retour en Général) : plage de comptes remise à
+//               zéro ; (4) « Centraliser les comptes de tiers » coché par défaut en Général ; (5) sous-totaux mensuels
+//               ou trimestriels (trimestres de l'exercice) ; (6) option Solde progressif (sinon solde de la ligne) ;
+//               (7) Lettrage entre Débit et Crédit ; (8) Imprimer : fenêtre d'impression dédiée (page blanche avant) ;
+//               (9) largeur fixe = zone de contenu native.
+//               v2.3 (2026-11-13, retours de Nicolas) : (1) colonne PJ plus masquée (place réservée à la barre de
 //               défilement) et survol de l'icône = aperçu de la pièce (<lien GED>/preview) ; (2) cases d'options
 //               alignées à gauche (styles de l'appli neutralisés) ; (3) « Centraliser les comptes de tiers » grisé en
 //               Clients / Fournisseurs (et non envoyé) ; (4) ouverture toujours sur l'exercice N ; (5) Commentaire :
@@ -728,16 +736,16 @@
   // mémoire. Aucun nœud natif touché.
   // ==================================================================
   const GLP_ID = 'tmbc-glp-root';
-  const GLP_OPTS_KEYS = ['subtype', 'range', 'rangeEdited', 'attachment', 'commentAccount', 'commentEntry', 'notLettered', 'notSolde', 'centralize', 'lettMode'];
+  const GLP_OPTS_KEYS = ['subtype', 'range', 'attachment', 'commentAccount', 'commentEntry', 'notLettered', 'notSolde', 'centralize', 'lettMode', 'subMode', 'progressive'];
   const GLP_DEFAULT_RANGE = { 0: '', 1: '41-419999', 2: '40-409999' };
   const glSocietyId = () => { const m = /^\/tab\/(\d+)\//.exec(location.pathname); return m && m[1] !== '0' ? m[1] : ''; };
   const glHeaders = () => { const h = ownHeaders(); const s = glSocietyId(); if (s) h['society-id'] = s; return h; };
   const GLP = {
     open: false, subtype: 0, range: '', rangeEdited: false, start: '', end: '', exercises: [],
     attachment: true, commentAccount: false, commentEntry: false, notLettered: false, notSolde: false, centralize: false,
-    lettMode: 'all', q: '', loading: false, error: '', model: null, buf: null, reqId: 0, soc: '',
+    lettMode: 'all', subMode: '', progressive: true, accComments: {}, accComKey: '', q: '', loading: false, error: '', model: null, buf: null, reqId: 0, soc: '',
   };
-  function glpOptsKey() { const s = glSocietyId(); return s ? 'tmbcGlpOpts|' + s : ''; }
+  function glpOptsKey() { const s = glSocietyId(); return s ? 'tmbcGlpOpts2|' + s : ''; } // v2.4 : nouveaux défauts
   function glpSaveOpts() {
     const k = glpOptsKey(); if (!k) return;
     const o = {}; GLP_OPTS_KEYS.forEach((x) => { o[x] = GLP[x]; });
@@ -745,7 +753,7 @@
   }
   function glpRestoreOpts() {
     GLP.subtype = 0; GLP.range = ''; GLP.rangeEdited = false; GLP.attachment = true; GLP.commentAccount = false; GLP.commentEntry = false;
-    GLP.notLettered = false; GLP.notSolde = false; GLP.centralize = false; GLP.lettMode = 'all';
+    GLP.notLettered = false; GLP.notSolde = false; GLP.centralize = true; GLP.lettMode = 'all'; GLP.subMode = ''; GLP.progressive = true;
     try { const o = JSON.parse(localStorage.getItem(glpOptsKey()) || 'null'); if (o && typeof o === 'object') GLP_OPTS_KEYS.forEach((x) => { if (x in o) GLP[x] = o[x]; }); } catch (e) { /* ignore */ }
   }
   const isoFr = (iso) => (iso ? iso.slice(8, 10) + '/' + iso.slice(5, 7) + '/' + iso.slice(0, 4) : '');
@@ -781,6 +789,42 @@
       centralize_account: String(!!GLP.centralize && GLP.subtype === 0), account_number: GLP.range || '', xls: 'true',
     };
   }
+  // (v2.4) Commentaires de compte : le classeur ne les contient pas (seuls ceux des lignes y sont) ;
+  // comptes commentés lus dans la balance (hasComment, id_account), puis GET /comments?account_id=
+  // (appels natifs relevés, cf. balance.js / Consultation Premium), au plus 150 comptes.
+  function htmlText(h) { const d = document.createElement('div'); d.innerHTML = String(h || ''); return d.textContent.replace(/\s+/g, ' ').trim(); }
+  async function glpLoadAccountComments(id) {
+    const key = GLP.soc + '|' + GLP.start + '|' + GLP.end + '|' + GLP.subtype;
+    if (GLP.accComKey === key) return;
+    const out = {};
+    try {
+      const q = new URLSearchParams({
+        start_date: GLP.start.replace(/-/g, ''), end_date: GLP.end.replace(/-/g, ''), compare: 'false', unbalanced_only: 'false', cumul: 'false',
+        an_simulation: 'false', centralize_account: 'false', extended: 'true', subtype: String(GLP.subtype), unvalidated_accounts_only: 'false',
+      });
+      if (GLP.subtype) q.set('filter', GLP_DEFAULT_RANGE[GLP.subtype]);
+      const r = await fetch('https://prod-ws.myunisoft.fr/balance_dynamique/v2?' + q.toString(), { headers: glHeaders(), credentials: 'include', __tmbcOwn: true });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const j = await r.json();
+      const list = [];
+      (function walk(nodes) { (nodes || []).forEach((n) => { if (n.account_List && n.account_List.length) walk(n.account_List); else if (n.hasComment && n.id_account) list.push(n); }); })(j.data);
+      const todo = list.slice(0, 150);
+      for (let i = 0; i < todo.length; i += 6) {
+        if (id !== GLP.reqId) return;
+        await Promise.all(todo.slice(i, i + 6).map(async (n) => {
+          try {
+            const rr = await fetch('https://prod-ws.myunisoft.fr/comments?account_id=' + encodeURIComponent(n.id_account), { headers: glHeaders(), credentials: 'include', __tmbcOwn: true });
+            const cs = rr.ok ? await rr.json() : [];
+            const txt = (Array.isArray(cs) ? cs : []).map((c) => htmlText(c.body || c.comment)).filter(Boolean);
+            if (txt.length) out[String(n.account_number)] = txt;
+          } catch (e) { /* ignore */ }
+        }));
+      }
+    } catch (e) { /* commentaires de compte indisponibles */ }
+    GLP.accComments = out;
+    GLP.accComKey = key;
+  }
+
   async function glpLoad() {
     if (!GLP.start || !GLP.end || GLP.start > GLP.end) { GLP.error = 'Période invalide.'; glpRender(); return; }
     const id = ++GLP.reqId;
@@ -805,6 +849,7 @@
       if (id !== GLP.reqId) return;
       GLP.model = buildModel(parseSheet(sheet, shared));
       GLP.buf = buf;
+      if (GLP.commentAccount) await glpLoadAccountComments(id);
       panelModelPeriod = { start: GLP.start.replace(/-/g, ''), end: GLP.end.replace(/-/g, '') };
     } catch (e) {
       if (id !== GLP.reqId) return;
@@ -825,27 +870,49 @@
       return r.width > 0 && r.top < 90;
     });
     const top = home ? Math.round(home.getBoundingClientRect().bottom + 8) : 58;
+    // (2026-11-13) largeur fixe = zone de contenu native (.pageContent, centrée sur grand écran
+    // par Affichage Premium) : la fenêtre ne change plus de largeur selon le tableau.
+    const pcEl = document.querySelector('.pageContent');
+    const pcR = pcEl && pcEl.getBoundingClientRect();
+    const rightPx = pcR && pcR.width > 200 && pcR.right > left + 300 ? Math.max(0, Math.round(window.innerWidth - pcR.right)) : 0;
     if (root.style.left !== left + 'px') root.style.left = left + 'px';
     if (root.style.top !== top + 'px') root.style.top = top + 'px';
+    if (root.style.right !== rightPx + 'px') root.style.right = rightPx + 'px';
   }
 
   // Lignes du tableau (mêmes règles que le panneau historique : solde recalculé
   // en filtre lettré / non lettré, recherche texte, plafond d'affichage).
+  // (v2.4) Colonnes : Date, Journal, Pièce, Pièce 2, Intitulé, Débit, Lettrage, Crédit, Solde (+ Commentaire, PJ).
+  // Options d'affichage : sous-totaux mensuels / trimestriels, solde progressif (sinon solde de la ligne).
+  function glpPeriodKey(dateTxt) {
+    const m = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(String(dateTxt || ''));
+    if (!m) return null;
+    const y = +m[3], mo = +m[2];
+    if (GLP.subMode === 'M') return { k: m[3] + '-' + m[2], label: 'Sous-total ' + m[2] + '/' + m[3] };
+    const sy = +GLP.start.slice(0, 4), sm = +GLP.start.slice(5, 7);
+    const q = Math.max(0, Math.floor((y * 12 + mo - (sy * 12 + sm)) / 3));
+    const fm = ((sm - 1 + q * 3) % 12) + 1, fy = sy + Math.floor((sm - 1 + q * 3) / 12);
+    const lm = ((sm - 1 + q * 3 + 2) % 12) + 1, ly = sy + Math.floor((sm - 1 + q * 3 + 2) / 12);
+    const p2 = (n) => String(n).padStart(2, '0');
+    return { k: 'T' + q, label: 'Sous-total T' + (q + 1) + ' (' + p2(fm) + '/' + fy + ' – ' + p2(lm) + '/' + ly + ')' };
+  }
   function glpRows(model) {
     const hm = model.headerMap || {};
     const comL = hm['Commentaire'];
     const pjL = hm['Pièce jointe'];
-    const showCom = !!comL && (GLP.commentEntry || GLP.commentAccount);
+    const accCom = GLP.commentAccount ? GLP.accComments || {} : {};
+    const showCom = (!!comL && GLP.commentEntry) || (GLP.commentAccount && Object.keys(accCom).length > 0);
     const showPj = !!pjL && GLP.attachment;
     const ncol = 9 + (showCom ? 1 : 0) + (showPj ? 1 : 0);
     const mode = GLP.lettMode;
     const f = (GLP.q || '').toLowerCase();
-    const recalc = mode === 'non' || mode === 'let';
+    const recalc = mode === 'non' || mode === 'let' || !GLP.progressive;
     const out = [];
     let shown = 0, accounts = 0, truncated = false, gI = 0, gJ = 0;
-    const extra = (l) => (showCom ? '<td class="com" title="' + esc(l[comL] || '') + '">' + esc(l[comL] || '') + '</td>' : '') +
+    const extra = (l) => (showCom ? '<td class="com" title="' + esc((comL && l[comL]) || '') + '">' + esc((comL && l[comL]) || '') + '</td>' : '') +
       (showPj ? '<td class="pj">' + (l[pjL] ? '<a href="' + esc(String(l[pjL])) + '" data-pjprev="' + esc(String(l[pjL])) + '" target="_blank" rel="noreferrer">' + PJ_SVG + '</a>' : '') + '</td>' : '');
     const extraEmpty = (showCom ? '<td></td>' : '') + (showPj ? '<td></td>' : '');
+    const totRow = (cls, label, I, J, K) => '<tr class="' + cls + '"><td colspan="5">' + esc(label) + '</td>' + numCell(I) + '<td></td>' + numCell(J) + numCell(K) + extraEmpty + '</tr>';
     for (const g of model.groups) {
       let base = g.lines;
       if (mode === 'non') base = base.filter((l) => !isLettered(l));
@@ -857,7 +924,7 @@
         base = base.map((l) => {
           const di = typeof l.I === 'number' ? l.I : 0, cj = typeof l.J === 'number' ? l.J : 0;
           sumI += di; sumJ += cj; run = r2(run + di - cj);
-          return Object.assign({}, l, { K: run });
+          return Object.assign({}, l, { K: GLP.progressive ? run : r2(di - cj) });
         });
         sumI = r2(sumI); sumJ = r2(sumJ); gI += sumI; gJ += sumJ;
       }
@@ -865,27 +932,37 @@
       const lines = !f || headTxt.indexOf(f) !== -1 ? base : base.filter((l) => Object.keys(l).some((k) => String(l[k]).toLowerCase().indexOf(f) !== -1));
       if (!lines.length) continue;
       accounts++;
-      const accCom = g.comments && g.comments.length ? '<span class="acom">' + esc(g.comments.join(' · ')) + '</span>' : '';
-      out.push('<tr class="acc"><td colspan="' + ncol + '"><span class="lk" data-a="' + esc(g.num) + '" data-act="acc" title="Ouvrir la consultation du compte (Maj+clic : nouvelle fenêtre)"><b>' + esc(g.num) + '</b>&nbsp;&nbsp;' + esc(g.label) + '</span>' + accCom + '</td></tr>');
+      const coms = (g.comments || []).concat(accCom[g.num] || []);
+      const head = '<span class="lk" data-a="' + esc(g.num) + '" data-act="acc" title="Ouvrir la consultation du compte (Maj+clic : nouvelle fenêtre)"><b>' + esc(g.num) + '</b>&nbsp;&nbsp;' + esc(g.label) + '</span>';
+      if (showCom) out.push('<tr class="acc"><td colspan="9">' + head + '</td><td class="com acom">' + esc(coms.join(' · ')) + '</td>' + (showPj ? '<td></td>' : '') + '</tr>');
+      else out.push('<tr class="acc"><td colspan="' + ncol + '">' + head + (coms.length ? '<span class="acom">' + esc(coms.join(' · ')) + '</span>' : '') + '</td></tr>');
+      let pk = null, pI = 0, pJ = 0, pK;
+      const flushP = () => { if (pk) out.push(totRow('sub', pk.label, r2(pI), r2(pJ), pK)); pk = null; pI = 0; pJ = 0; };
       for (const l of lines) {
         if (shown >= MAX_ROWS) { truncated = true; break; }
+        if (GLP.subMode) {
+          const k = glpPeriodKey(l.C);
+          if (k && (!pk || pk.k !== k.k)) { flushP(); pk = k; }
+          pI += typeof l.I === 'number' ? l.I : 0; pJ += typeof l.J === 'number' ? l.J : 0; pK = GLP.progressive ? l.K : r2(pI - pJ);
+        }
         shown++;
         const amt = typeof l.I === 'number' && l.I !== 0 ? l.I : typeof l.J === 'number' ? l.J : 0;
         out.push('<tr class="ln" data-a="' + esc(g.num) + '" data-d="' + esc(l.C || '') + '" data-j="' + esc(l.D || '') + '" data-m="' + amt + '"><td class="m">' + esc(l.C || '') +
           '</td><td class="lk" data-act="ent" title="Ouvrir l\'écriture dans la saisie">' + esc(l.D || '') + '</td><td>' + esc(l.E || '') + '</td><td>' + esc(l.F || '') +
-          '</td><td class="m lett">' + esc(l.G || '') + '</td><td class="lib" title="' + esc(l.H || '') + '">' + esc(l.H || '') + '</td>' + numCell(l.I) + numCell(l.J) + numCell(l.K) + extra(l) + '</tr>');
+          '</td><td class="lib" title="' + esc(l.H || '') + '">' + esc(l.H || '') + '</td>' + numCell(l.I) + '<td class="m lett">' + esc(l.G || '') + '</td>' + numCell(l.J) + numCell(l.K) + extra(l) + '</tr>');
       }
+      if (GLP.subMode && !f) flushP();
       if (!f) {
-        if (recalc) out.push('<tr class="tot"><td colspan="6">Solde du compte ' + esc(g.num) + (mode === 'non' ? ' (non lettré)' : ' (lettré)') + '</td>' + numCell(sumI) + numCell(sumJ) + numCell(r2(sumI - sumJ)) + extraEmpty + '</tr>');
-        else if (g.total) out.push('<tr class="tot"><td colspan="6">Solde du compte ' + esc(g.num) + '</td>' + numCell(g.total.I) + numCell(g.total.J) + numCell(typeof g.total.I === 'number' || typeof g.total.J === 'number' ? r2((g.total.I || 0) - (g.total.J || 0)) : undefined) + extraEmpty + '</tr>');
+        if (recalc) out.push(totRow('tot', 'Solde du compte ' + g.num + (mode === 'non' ? ' (non lettré)' : mode === 'let' ? ' (lettré)' : ''), sumI, sumJ, r2(sumI - sumJ)));
+        else if (g.total) out.push(totRow('tot', 'Solde du compte ' + g.num, g.total.I, g.total.J, typeof g.total.I === 'number' || typeof g.total.J === 'number' ? r2((g.total.I || 0) - (g.total.J || 0)) : undefined));
       }
       if (truncated) break;
     }
     let tot = null;
     if (!f && !truncated) {
-      if (recalc) tot = { label: 'Total général (' + (mode === 'non' ? 'non lettré' : 'lettré') + ')', I: r2(gI), J: r2(gJ) };
+      if (recalc) tot = { label: 'Total général' + (mode === 'non' ? ' (non lettré)' : mode === 'let' ? ' (lettré)' : ''), I: r2(gI), J: r2(gJ) };
       else if (model.grandTotal) tot = { label: model.grandTotal.H || 'Total', I: model.grandTotal.I || 0, J: model.grandTotal.J || 0 };
-      if (tot) out.push('<tr class="tot gt"><td colspan="6">' + esc(tot.label) + '</td>' + numCell(tot.I) + numCell(tot.J) + numCell(r2(tot.I - tot.J)) + extraEmpty + '</tr>');
+      if (tot) out.push(totRow('tot gt', tot.label, tot.I, tot.J, r2(tot.I - tot.J)));
     }
     if (truncated) out.push('<tr class="tot"><td colspan="' + ncol + '">Affichage limité à ' + MAX_ROWS + ' lignes — affinez la plage de comptes ou la recherche.</td></tr>');
     return { html: out.join(''), shown, accounts, showCom, showPj, tot };
@@ -920,9 +997,10 @@
       const neg = (v) => '<b class="' + (v < 0 ? 'neg' : '') + '">' + fmtNum(v) + '</b>';
       bar = '<div class="glp-bar"><span>Affichage : <b>' + r.accounts + ' compte' + (r.accounts > 1 ? 's' : '') + '</b> · <b>' + r.shown + ' ligne' + (r.shown > 1 ? 's' : '') + '</b></span>' +
         (r.tot ? '<span>Débit ' + neg(r.tot.I) + '</span><span>Crédit ' + neg(r.tot.J) + '</span><span>Solde ' + neg(r2(r.tot.I - r.tot.J)) + '</span>' : '') + '</div>';
-      const cols = '<col style="width:92px"><col style="width:64px"><col style="width:112px"><col style="width:96px"><col style="width:70px"><col style="width:320px"><col style="width:124px"><col style="width:124px"><col style="width:128px">' + (r.showCom ? '<col style="width:230px">' : '') + (r.showPj ? '<col style="width:52px">' : '');
-      const W = 92 + 64 + 112 + 96 + 70 + 320 + 124 * 2 + 128 + (r.showCom ? 230 : 0) + (r.showPj ? 52 : 0);
-      body = '<div class="glp-table-wrap"><table style="width:' + W + 'px"><colgroup>' + cols + '</colgroup><thead><tr><th>Date</th><th>Journal</th><th>Pièce</th><th>Pièce 2</th><th>Lettrage</th><th>Intitulé</th><th class="n">Débit</th><th class="n">Crédit</th><th class="n">Solde</th>' +
+      // (v2.4) Intitulé sans largeur fixe : il prend la place restante (pas de bande vide à droite)
+      const cols = '<col style="width:92px"><col style="width:64px"><col style="width:112px"><col style="width:96px"><col><col style="width:124px"><col style="width:70px"><col style="width:124px"><col style="width:128px">' + (r.showCom ? '<col style="width:260px">' : '') + (r.showPj ? '<col style="width:52px">' : '');
+      const W = 92 + 64 + 112 + 96 + 300 + 124 + 70 + 124 + 128 + (r.showCom ? 260 : 0) + (r.showPj ? 52 : 0);
+      body = '<div class="glp-table-wrap"><table style="width:100%;min-width:' + W + 'px"><colgroup>' + cols + '</colgroup><thead><tr><th>Date</th><th>Journal</th><th>Pièce</th><th>Pièce 2</th><th>Intitulé</th><th class="n">Débit</th><th>Lettrage</th><th class="n">Crédit</th><th class="n">' + (GLP.progressive ? 'Solde progressif' : 'Solde') + '</th>' +
         (r.showCom ? '<th>Commentaire</th>' : '') + (r.showPj ? '<th style="text-align:center!important">PJ</th>' : '') + '</tr></thead><tbody>' + r.html + '</tbody></table></div>';
     }
     root.innerHTML =
@@ -939,20 +1017,55 @@
       '<button type="button" class="glp-load" data-glp="load"' + (GLP.loading ? ' disabled' : '') + '>' + (GLP.loading ? 'Chargement…' : 'Actualiser') + '</button>' +
       '</aside><section class="glp-main">' +
       '<div class="glp-tools"><select data-in="lett" title="Filtre de lettrage (affichage)"><option value="all">Toutes les écritures</option><option value="non">Non lettrées</option><option value="let">Lettrées</option></select>' +
+      '<select data-in="sub" title="Sous-totaux par période (affichage)"><option value="">Sans sous-totaux</option><option value="M">Sous-totaux mensuels</option><option value="Q">Sous-totaux trimestriels</option></select>' +
+      '<label class="glp-tchk"><input type="checkbox" data-in="prog"' + (GLP.progressive ? ' checked' : '') + '> Solde progressif</label>' +
       '<input type="search" data-in="q" placeholder="Rechercher (compte, libellé, pièce, date, montant…)" value="' + esc(GLP.q) + '"></div>' + bar +
       body + '<div class="glp-hints"><span><b>Clic</b> compte : consultation</span><span><b>Clic</b> journal : ouvre l\'écriture</span><span><b>Clic</b> montant : recherche du montant</span><span><b>Échap</b> fermer</span></div>' +
       '</section></div>';
     root.querySelector('[data-in="lett"]').value = GLP.lettMode;
-    // (v2.1) en-tête (Imprimer / Export Excel / ✕), bandeau et outils limités à la largeur du tableau
-    const tbl = root.querySelector('.glp-table-wrap table');
-    if (tbl) GLP.fitW = tbl.offsetWidth + 2 + 18; // + barre de défilement verticale (sinon la colonne PJ passe dessous)
-    if (GLP.fitW) {
-      const w = Math.max(GLP.fitW, 760);
-      root.querySelector('.glp-main').style.maxWidth = w + 'px';
-      root.querySelector('.glp-head').style.maxWidth = 20 + 250 + 12 + w + 20 + 'px';
-    }
+    root.querySelector('[data-in="sub"]').value = GLP.subMode || '';
     const wrap = root.querySelector('.glp-table-wrap');
     if (wrap && keepScroll) { wrap.scrollTop = keepScroll[0]; wrap.scrollLeft = keepScroll[1]; }
+  }
+
+  // (2026-11-13) Impression dans une fenêtre dédiée : la feuille de style de
+  // l'appli masquait tout le contenu à l'impression (page blanche). On y
+  // recopie le titre, le bandeau et le tableau affichés, sans les champs.
+  function printInWindow(title, info, nodes) {
+    const w = window.open('', 'tmb-print-window', 'width=1200,height=900,resizable=yes,scrollbars=yes');
+    if (!w) return;
+    const esc2 = (x) => String(x == null ? '' : x).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const parts = nodes
+      .filter(Boolean)
+      .map((n) => {
+        const c = n.cloneNode(true);
+        c.querySelectorAll('input, select, button, .tmb-filter-row, .tmb-col-resizer, .tmb-expand-toggle').forEach((e) => e.remove());
+        c.querySelectorAll('[style*="sticky"]').forEach((e) => (e.style.position = 'static'));
+        return c.outerHTML;
+      })
+      .join('');
+    w.document.open();
+    w.document.write(
+      '<!doctype html><html><head><meta charset="utf-8"><title>' + esc2(title) + '</title><style>' +
+        'body{font-family:"Segoe UI",Arial,sans-serif;font-size:10px;color:#1c2b44;margin:12mm}' +
+        'h1{font-size:15px;margin:0 0 2px;color:#0f2a52}.info{color:#5b6b85;margin:0 0 8px}' +
+        'table{border-collapse:collapse;width:auto;table-layout:auto}th,td{border:1px solid #c3cddd;padding:2px 5px;white-space:nowrap;position:static!important;background:none}' +
+        'th{background:#f3f6fb;text-align:left}td.n,td[style*="right"]{text-align:right;font-family:Consolas,monospace}' +
+        '.neg,.tmb-negative,td.neg,td.cr{color:#c62828}tr.acc td,tr.tot td,tr.sub td,.tmb-subtotal-row td,tr.gt td{font-weight:700;background:#eef2f8}' +
+        'td.com,td.acom{white-space:normal}svg{width:11px;height:11px}' +
+        '.tmb-bars,.glp-bar,.tmb-bar{display:flex;gap:18px;margin:0 0 6px;font-weight:600}' +
+        '@page{size:landscape;margin:10mm}' +
+        '</style></head><body><h1>' + esc2(title) + '</h1><div class="info">' + esc2(info) + '</div>' + parts + '</body></html>'
+    );
+    w.document.close();
+    setTimeout(() => {
+      try {
+        w.focus();
+        w.print();
+      } catch (e) {
+        /* ignore */
+      }
+    }, 400);
   }
 
   function glpDownload() {
@@ -973,14 +1086,14 @@
         const st = Number(b.dataset.sub);
         if (st !== GLP.subtype) {
           GLP.subtype = st;
-          if (!GLP.rangeEdited) GLP.range = GLP_DEFAULT_RANGE[st] || '';
+          GLP.range = GLP_DEFAULT_RANGE[st] || ''; // (v2.4) changement de type : le filtre de comptes est remis à zéro
           glpSaveOpts(); glpLoad();
         }
         return;
       }
       const act = b.dataset.glp;
       if (act === 'close') glpClose();
-      else if (act === 'print') window.print();
+      else if (act === 'print') { const rt = document.getElementById(GLP_ID); printInWindow('Grand livre', glpInfo(), [rt.querySelector('.glp-bar'), rt.querySelector('.glp-table-wrap table')]); }
       else if (act === 'xlsx') glpDownload();
       else if (act === 'load') glpLoad();
       return;
@@ -993,6 +1106,8 @@
     if (t.dataset.opt) { GLP[t.dataset.opt] = t.checked; glpSaveOpts(); glpLoad(); return; }
     const k = t.dataset.in;
     if (k === 'lett') { GLP.lettMode = t.value; glpSaveOpts(); glpRender(); }
+    else if (k === 'sub') { GLP.subMode = t.value; glpSaveOpts(); glpRender(); }
+    else if (k === 'prog') { GLP.progressive = t.checked; glpSaveOpts(); glpRender(); }
     else if (k === 'start' || k === 'end') { if (t.value) { GLP[k] = t.value; glpLoad(); } }
     else if (k === 'ex') { const e = GLP.exercises[Number(t.value)]; if (e) { GLP.start = e.start; GLP.end = e.end; glpLoad(); } }
     else if (k === 'range') { const v = t.value.trim(); if (v !== GLP.range) { GLP.range = v; GLP.rangeEdited = true; glpSaveOpts(); glpLoad(); } }
@@ -1165,6 +1280,10 @@
     #${GLP_ID} tr.acc td{background:#e8eef8;color:#0f2a52;padding:7px 8px;border-top:1px solid #aebbd0;position:sticky;top:34px;z-index:1}
     #${GLP_ID} tr.acc b{font-family:${MONO}}
     #${GLP_ID} tr.acc .acom{margin-left:18px;color:#7a5a00;background:#fffbe6;border-radius:4px;padding:1px 6px;font-size:12px}
+    #${GLP_ID} tr.acc td.acom{margin:0;border-radius:0;background:#fffbe6!important;color:#7a5a00;font-size:12px;white-space:normal!important}
+    #${GLP_ID} tr.sub td{background:#f7f9fc;color:#0f2a52;font-weight:600;font-style:italic}
+    #${GLP_ID} .glp-tchk{display:flex;align-items:center;gap:6px;white-space:nowrap;font-size:13px;cursor:pointer}
+    #${GLP_ID} .glp-tchk input{width:auto!important;height:auto!important;flex:0 0 auto!important;margin:0!important;accent-color:#0f2a52}
     #${GLP_ID} tr.ln:nth-child(even) td{background:#f8fafd}
     #${GLP_ID} tr.ln:hover td{background:#eaf1fc}
     #${GLP_ID} tr.tot td{background:#f3f6fb;font-weight:700;color:#0f2a52;border-top:1px solid #aebbd0}

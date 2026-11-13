@@ -1,8 +1,13 @@
 // ==UserScript==
 // @name         MyUnisoft – Balance : vue 100% personnalisée (v2, API directe)
 // @namespace    https://nicolas.chassard/myunisoft
-// @version      4.4-ext
-// @description  v4.4 (2026-11-13, retours de Nicolas ; dossier TLAJ GEMEHL vérifié en direct) : exercice N = celui que
+// @version      4.5-ext
+// @description  v4.5 (2026-11-13, retours de Nicolas) : (1) largeur fixe = zone de contenu native (.pageContent,
+//               centrée par Affichage Premium) au lieu de suivre la largeur du tableau ; (2) Imprimer : impression
+//               dans une fenêtre dédiée (la feuille de style de l'appli donnait une page blanche) ; (3) colonne Valid.
+//               avant Commentaire, commentaire affiché en clair (texte des commentaires du compte, retour à la ligne),
+//               lu pour toutes les classes (seule la classe 1 l'était).
+//               v4.4 (2026-11-13, retours de Nicolas ; dossier TLAJ GEMEHL vérifié en direct) : exercice N = celui que
 //               MyUnisoft étiquette « N » (GET /exercices), et non celui qui contient aujourd'hui (exercices décalés
 //               01/07-30/06 : N = 2025/2026). Sélecteur natif « Exercice(s) » piloté par libellé (« N+1 », « N »…), ses
 //               options n'étant pas dans l'ordre de fiscal_year_list ; liste « Exercice(s) » = tous les exercices du
@@ -447,6 +452,7 @@
     error: null,
     columnOrder: [], // (v4.3) ordre des colonnes choisi par glisser-déposer des en-têtes
     columnWidths: {}, // { colId: '123px' } — largeurs ajustées manuellement
+    commentTexts: {}, // (v4.5) { id_account: texte des commentaires }
     commentCounts: {}, // { id_account: nombre de commentaires } — rempli à la demande (voir refreshCommentCounts)
     aged: false, // "Balance âgée" (uniquement Client/Fournisseur) — voir buildAgedApiUrl
     agedCompareTo: 1, // 1 = Date de facture, 2 = Date d'échéance (reniflé en direct sur le panneau natif)
@@ -808,7 +814,15 @@
     });
     if (!res.ok) throw new Error('HTTP ' + res.status);
     const comments = await res.json();
-    return Array.isArray(comments) ? comments.length : 0;
+    // (v4.5) texte des commentaires (HTML de l'éditeur natif -> texte), affiché dans la colonne
+    const d = document.createElement('div');
+    return (Array.isArray(comments) ? comments : [])
+      .map((c) => {
+        d.innerHTML = String(c.body || c.comment || '');
+        return d.textContent.replace(/\s+/g, ' ').trim();
+      })
+      .filter(Boolean)
+      .join(' · ');
   }
 
   // Va chercher le nombre de commentaires pour tous les comptes marqués
@@ -821,11 +835,12 @@
   function refreshCommentCounts() {
     if (!state.showRevisionCols || !state.data) return;
     if (commentCountsInFlight) return;
-    const root = state.data && state.data.data && state.data.data[0];
-    if (!root || !root.account_List) return;
-    const leaves = flattenLeaves(root.account_List, []).map((r) => r.node);
+    // (v4.5) toutes les classes (seule la première était parcourue)
+    const all = (state.data && state.data.data) || [];
+    if (!all.length) return;
+    const leaves = flattenLeaves(all, []).map((r) => r.node);
     const toFetch = leaves.filter(
-      (n) => n.hasComment && n.id_account != null && state.commentCounts[n.id_account] === undefined
+      (n) => n.hasComment && n.id_account != null && state.commentTexts[n.id_account] === undefined
     );
     if (!toFetch.length) return;
     commentCountsInFlight = true;
@@ -833,10 +848,10 @@
       toFetch.map((n) =>
         fetchCommentCount(n.id_account)
           .then((count) => {
-            state.commentCounts[n.id_account] = count;
+            state.commentTexts[n.id_account] = count;
           })
           .catch(() => {
-            state.commentCounts[n.id_account] = null; // échec : on n'insiste pas, l'icône reste sans chiffre
+            state.commentTexts[n.id_account] = ''; // échec : on n'insiste pas, l'icône reste sans chiffre
           })
       )
     ).then(() => {
@@ -955,7 +970,8 @@
         state.data = data;
         state.loading = false;
         state.expanded = new Set();
-        state.commentCounts = {}; // nouvelles données = anciens comptes potentiellement invalides
+        state.commentCounts = {};
+        state.commentTexts = {}; // nouvelles données = anciens comptes potentiellement invalides
         state.n2 = null;
         renderApp();
         refreshCommentCounts();
@@ -1339,8 +1355,14 @@
       return r.width > 0 && r.top < 90;
     });
     const top = home ? Math.round(home.getBoundingClientRect().bottom + 8) : 58;
+    // (2026-11-13) largeur fixe = zone de contenu native (.pageContent, centrée sur grand écran
+    // par Affichage Premium) : la fenêtre ne change plus de largeur selon le tableau.
+    const pcEl = document.querySelector('.pageContent');
+    const pcR = pcEl && pcEl.getBoundingClientRect();
+    const rightPx = pcR && pcR.width > 200 && pcR.right > left + 300 ? Math.max(0, Math.round(window.innerWidth - pcR.right)) : 0;
     if (root.style.left !== left + 'px') root.style.left = left + 'px';
     if (root.style.top !== top + 'px') root.style.top = top + 'px';
+    if (root.style.right !== rightPx + 'px') root.style.right = rightPx + 'px';
   }
 
   function closeOverlay() {
@@ -1647,8 +1669,9 @@
   const BASE_COLUMNS_END = [
     { id: 'var_eur', label: 'Var. €', sortable: true, align: 'right', width: '108px', n1: true },
     { id: 'pj', label: 'PJ', sortable: true, align: 'center', width: '44px' },
-    { id: 'com', label: 'Com.', sortable: true, align: 'center', width: '52px' },
+    // (v4.5) Valid. avant Commentaire ; le commentaire est affiché en clair (retour à la ligne)
     { id: 'valid', label: 'Valid.', sortable: true, align: 'center', width: '84px' },
+    { id: 'com', label: 'Commentaire', sortable: true, align: 'left', width: '240px' },
   ];
 
   // "Affichage mensuel" (2026-08-01) : reproduit la case native "Mois" du
@@ -2018,7 +2041,7 @@
       case 'pj':
         return node.nb_da_acc_docs || 0;
       case 'com':
-        return node.hasComment ? 1 : 0;
+        return node.hasComment ? state.commentTexts[node.id_account] || '(commentaire)' : '';
       case 'valid_collab':
         return (node.validation && node.validation.VCOL) || '';
       case 'valid_rm':
@@ -2101,11 +2124,8 @@
         return v ? String(v) : '';
       case 'valid':
         return (isValidated(node, 'VCOL') ? 'C' : '') + (isValidated(node, 'VRM') ? (isValidated(node, 'VCOL') ? ' ' : '') + 'RM' : '');
-      case 'com': {
-        if (!v) return '';
-        const count = node.id_account != null ? state.commentCounts[node.id_account] : undefined;
-        return typeof count === 'number' ? `💬 ${count}` : '💬';
-      }
+      case 'com':
+        return v ? String(v) : '';
       default:
         return v === null || v === undefined ? '' : String(v);
     }
@@ -2406,7 +2426,8 @@
       .reverse()
       .map((f) => {
         const ex = exerciseFor(f);
-        const txt = (ex && ex.label ? ex.label + ' — ' : '') + isoToFrDate(f.start) + ' au ' + isoToFrDate(f.end);
+        const d2 = (iso) => iso.slice(8, 10) + '/' + iso.slice(5, 7) + '/' + iso.slice(2, 4);
+        const txt = (ex && ex.label ? ex.label + ' — ' : '') + d2(f.start) + ' au ' + d2(f.end);
         return `<option value="${f.start}|${f.end}" ${f.start === state.startDate && f.end === state.endDate ? 'selected' : ''}>${txt}</option>`;
       })
       .join('');
@@ -2570,10 +2591,10 @@
           inner = pill('VCOL', 'C', 'Collaborateur') + ' ' + pill('VRM', 'RM', 'Responsable de mission');
         } else if (c.id === 'com' && !isSubtotal && node.id_account) {
           const hasCom = !!node.hasComment;
-          const count = hasCom ? state.commentCounts[node.id_account] : undefined;
-          const label = hasCom ? (typeof count === 'number' ? String(count) : '•') : '';
+          const txt = hasCom ? state.commentTexts[node.id_account] : undefined;
+          const label = hasCom ? (typeof txt === 'string' && txt ? xmlEscape(txt) : '…') : '';
           inner = hasCom
-            ? `<span class="tmb-com-link" data-account-id="${xmlEscape(String(node.id_account))}" title="Commentaires du compte">${label}</span>`
+            ? `<span class="tmb-com-text" data-account-id="${xmlEscape(String(node.id_account))}" title="Clic : détail des commentaires">${label}</span>`
             : '';
         }
         if (c.id === 'var_eur' && typeof node.varPercent === 'number') {
@@ -3410,12 +3431,50 @@
     const head = root.querySelector('.tmb-head');
     const table = root.querySelector('table.tmb-table');
     if (!main || !head) return;
-    let w = table ? table.offsetWidth + 2 : lastFitW;
+    // (v4.5) plus d'ajustement à la largeur du tableau : largeur fixe (zone de contenu native, cf. placeOverlay)
+    main.style.maxWidth = '';
+    head.style.maxWidth = '';
+    lastFitW = table ? table.offsetWidth : lastFitW;
+  }
+
+  // (2026-11-13) Impression dans une fenêtre dédiée : la feuille de style de
+  // l'appli masquait tout le contenu à l'impression (page blanche). On y
+  // recopie le titre, le bandeau et le tableau affichés, sans les champs.
+  function printInWindow(title, info, nodes) {
+    const w = window.open('', 'tmb-print-window', 'width=1200,height=900,resizable=yes,scrollbars=yes');
     if (!w) return;
-    lastFitW = w;
-    w = Math.max(w, 760);
-    main.style.maxWidth = w + 'px';
-    head.style.maxWidth = 20 + 250 + 12 + w + 20 + 'px';
+    const esc2 = (x) => String(x == null ? '' : x).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const parts = nodes
+      .filter(Boolean)
+      .map((n) => {
+        const c = n.cloneNode(true);
+        c.querySelectorAll('input, select, button, .tmb-filter-row, .tmb-col-resizer, .tmb-expand-toggle').forEach((e) => e.remove());
+        c.querySelectorAll('[style*="sticky"]').forEach((e) => (e.style.position = 'static'));
+        return c.outerHTML;
+      })
+      .join('');
+    w.document.open();
+    w.document.write(
+      '<!doctype html><html><head><meta charset="utf-8"><title>' + esc2(title) + '</title><style>' +
+        'body{font-family:"Segoe UI",Arial,sans-serif;font-size:10px;color:#1c2b44;margin:12mm}' +
+        'h1{font-size:15px;margin:0 0 2px;color:#0f2a52}.info{color:#5b6b85;margin:0 0 8px}' +
+        'table{border-collapse:collapse;width:auto;table-layout:auto}th,td{border:1px solid #c3cddd;padding:2px 5px;white-space:nowrap;position:static!important;background:none}' +
+        'th{background:#f3f6fb;text-align:left}td.n,td[style*="right"]{text-align:right;font-family:Consolas,monospace}' +
+        '.neg,.tmb-negative,td.neg,td.cr{color:#c62828}tr.acc td,tr.tot td,tr.sub td,.tmb-subtotal-row td,tr.gt td{font-weight:700;background:#eef2f8}' +
+        'td.com,td.acom{white-space:normal}svg{width:11px;height:11px}' +
+        '.tmb-bars,.glp-bar,.tmb-bar{display:flex;gap:18px;margin:0 0 6px;font-weight:600}' +
+        '@page{size:landscape;margin:10mm}' +
+        '</style></head><body><h1>' + esc2(title) + '</h1><div class="info">' + esc2(info) + '</div>' + parts + '</body></html>'
+    );
+    w.document.close();
+    setTimeout(() => {
+      try {
+        w.focus();
+        w.print();
+      } catch (e) {
+        /* ignore */
+      }
+    }, 400);
   }
 
   function attachOverlayEvents(root) {
@@ -3423,7 +3482,7 @@
     const close = $('#tmb-close');
     if (close) close.addEventListener('click', closeOverlay);
     const print = $('#tmb-print');
-    if (print) print.addEventListener('click', () => window.print());
+    if (print) print.addEventListener('click', () => printInWindow('Balance', overlayInfo(), [root.querySelector('.tmb-bars'), root.querySelector('table.tmb-table')]));
     root.querySelectorAll('.tmb-seg-btn').forEach((b) =>
       b.addEventListener('click', () => setSubtype(Number(b.dataset.subtype)))
     );
@@ -3866,7 +3925,7 @@
 
     // Icônes Commentaires : ouvre un popover listant les commentaires de la
     // ligne (lecture seule — voir loadComments/showInfoPopover).
-    root.querySelectorAll('.tmb-com-link').forEach((el) => {
+    root.querySelectorAll('.tmb-com-link, .tmb-com-text').forEach((el) => {
       el.addEventListener('click', (e) => {
         e.stopPropagation();
         const accountId = el.dataset.accountId;
@@ -4114,6 +4173,9 @@
       #tmb-root td:not([data-col="account_number"]) .tmb-acct-link { color: inherit; text-decoration: none; }
       #tmb-root td .tmb-acct-link:hover { text-decoration: underline; }
       #tmb-root .tmb-pj-link { cursor: pointer; color: #1b4f9c; }
+      #tmb-root td[data-col="com"] { white-space: normal !important; overflow-wrap: anywhere; text-overflow: clip !important; }
+      #tmb-root .tmb-com-text { cursor: pointer; color: #3a4a63; font-size: 12px; line-height: 1.3; }
+      #tmb-root .tmb-com-text:hover { color: #1b4f9c; text-decoration: underline; }
       #tmb-root .tmb-com-link { cursor: pointer; display: inline-block; min-width: 18px; padding: 0 5px; border-radius: 9px; background: #e4ecfa; color: #1b4f9c; font-size: 11px; font-weight: 700; line-height: 16px; }
       #tmb-root .tmb-valid { display: inline-block; min-width: 22px; padding: 0 3px; border-radius: 4px; font-size: 10px; font-weight: 700; line-height: 16px; background: #f1f4f8; color: #8792a6; }
       #tmb-root .tmb-valid-ok { background: #dcfce7; color: #166534; }
