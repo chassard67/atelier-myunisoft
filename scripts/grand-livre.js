@@ -1,8 +1,10 @@
 // ==UserScript==
 // @name         MyUnisoft - Grand livre à l'écran
 // @namespace    https://nicolas.chassard/myunisoft
-// @version      2.1-ext
-// @description  v2.1 (2026-11-13, retours de Nicolas) : options de gauche à hauteur normale (les styles de l'appli
+// @version      2.2-ext
+// @description  v2.2 (2026-11-13) : appels window.TMBC_GL (Consultation Premium) envoyés avec l'en-tête society-id du
+//               dossier de l'onglet courant (l'en-tête relevé pouvait être celui d'un autre dossier ouvert : HTTP 400).
+//               v2.1 (2026-11-13, retours de Nicolas) : options de gauche à hauteur normale (les styles de l'appli
 //               étiraient les champs : hauteurs forcées) ; bandeau bleu sur sa propre ligne au-dessus du tableau ;
 //               en-tête (Imprimer / Export Excel / ✕), outils et bandeau limités à la largeur du tableau au lieu du
 //               bord droit de l'écran.
@@ -1414,7 +1416,7 @@
     async fetchLedgerModel(params) {
       const q = new URLSearchParams(params);
       const r = await fetch('https://prod-ws.myunisoft.fr/grand_livre?' + q.toString(), {
-        headers: ownHeaders(), credentials: 'include', __tmbcOwn: true,
+        headers: glHeaders(), credentials: 'include', __tmbcOwn: true,
       });
       if (!r.ok) throw new Error('Grand livre : HTTP ' + r.status);
       const buf = await r.arrayBuffer();
@@ -1433,7 +1435,7 @@
     async fetchLedgerRaw(params) {
       const q = new URLSearchParams(params);
       const r = await fetch('https://prod-ws.myunisoft.fr/grand_livre?' + q.toString(), {
-        headers: ownHeaders(), credentials: 'include', __tmbcOwn: true,
+        headers: glHeaders(), credentials: 'include', __tmbcOwn: true,
       });
       if (!r.ok) throw new Error('Grand livre : HTTP ' + r.status);
       const buf = await r.arrayBuffer();
@@ -1458,7 +1460,7 @@
         cumul: 'false', an_simulation: 'false', centralize_account: 'false', extended: 'false',
         subtype: '0', unvalidated_accounts_only: 'false',
       });
-      const r = await fetch('https://prod-ws.myunisoft.fr/balance_dynamique/v2?' + q.toString(), { credentials: 'include', headers: ownHeaders(), __tmbcOwn: true });
+      const r = await fetch('https://prod-ws.myunisoft.fr/balance_dynamique/v2?' + q.toString(), { credentials: 'include', headers: glHeaders(), __tmbcOwn: true });
       if (!r.ok) throw new Error('Balance : HTTP ' + r.status);
       const j = await r.json();
       const list = [];

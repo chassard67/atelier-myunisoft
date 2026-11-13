@@ -2,13 +2,13 @@
   "minExtensionVersion": "1.1.0",
   "licenceRequired": true,
   "release": {
-    "version": "1.3.1",
+    "version": "1.3.2",
     "date": "2026-11-13",
     "notes": [
-      "Balance, Grand Livre et Consultation Premium : sur grand écran, Imprimer / Export Excel / ✕ et les bandeaux s'arrêtent au bord du tableau au lieu du bord de l'écran.",
-      "Balance Premium : affichage trimestriel et trimestriel cumulé ; les affichages mensuels et trimestriels sont réservés à la balance générale (grisés en clients / fournisseurs).",
-      "Grand Livre Premium : options de gauche à taille normale, bandeau des totaux au-dessus du tableau.",
-      "Consultation Premium : champs remontés, commentaires annuel et permanent dans une colonne à droite (plus de zone vide)."
+      "Balance Premium : s'ouvre sur l'exercice N (même si N+1 existe) ; curseur sur N et N+1, séparés et étiquetés.",
+      "Balance Premium : colonnes déplaçables (glisser l'en-tête), bouton « tout déplier » en sous-totaux avec regroupements, case « tout sélectionner » sinon.",
+      "Balance Premium : Échap ne ferme plus la balance ; légende du bas retirée.",
+      "Consultation Premium : icône PJ et aperçu au survol rétablis pour les comptes fournisseurs / clients (le lien s'affichait à la place)."
     ]
   },
   "defaultMatches": [

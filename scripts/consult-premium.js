@@ -1,8 +1,12 @@
 // ==UserScript==
 // @name         MyUnisoft - Consultation Premium (page de consultation de compte maison)
 // @namespace    https://nicolas.chassard/myunisoft
-// @version      2.14-ext
-// @description  v2.14 (2026-11-13, retour de Nicolas) : bloc de sélection réorganisé — champs (Compte, Filtre, Du/Au ;
+// @version      2.15-ext
+// @description  v2.15 (2026-11-13, retour de Nicolas) : lignes lues dans le grand livre (filtres Fournisseurs /
+//               Clients…) : la colonne « Pièce jointe » du classeur était prise pour la colonne « Pièce » (même début
+//               de libellé) -> le lien s'affichait dans Pièce et l'icône PJ manquait. En-tête reconnu en premier ;
+//               icône PJ affichée, survol = aperçu de la pièce (<lien GED>/preview), clic = ouverture.
+//               v2.14 (2026-11-13, retour de Nicolas) : bloc de sélection réorganisé — champs (Compte, Filtre, Du/Au ;
 //               Lettrage, montant, recherche…) sur deux lignes à gauche et commentaires annuel / permanent empilés dans
 //               une colonne à droite : plus de zone vide au-dessus des champs.
 //               v2.13 (2026-11-13, demandé par Nicolas) : (1) commentaire permanent affiché SOUS le commentaire annuel ;
@@ -194,6 +198,7 @@
       else if (/intitule compte/.test(t)) m.accLabel = col;
       else if (/^date/.test(t)) m.date = col;
       else if (/^(journal|jnl|jal|cj)/.test(t)) m.jnl = col;
+      else if (/^pj$|piece.?jointe/.test(t)) m.pj = col; // (v2.15) avant « Pièce » : « Pièce jointe » commence aussi par « piece »
       else if (/^piece 2|^piece2/.test(t)) m.piece2 = col;
       else if (/^piece/.test(t)) m.piece = col;
       else if (/lettr/.test(t)) m.lett = col;
@@ -244,7 +249,8 @@
           id: ++seq, acc: num, date: iso, dateTxt: iso ? isoToFr(iso) : txt('date'),
           jnl: txt('jnl'), piece: txt('piece'), piece2: txt('piece2'), lett: txt('lett').trim(), lib: txt('lib').toUpperCase(),
           d: nm('deb'), c: nm('cre'), ech: cols.ech ? excelDateToIso(c[cols.ech]) : '', com: txt('com'),
-          pj: cols.pj ? (parseFloat(c[cols.pj]) > 0 || /oui|x|1/i.test(txt('pj'))) : false,
+          pj: cols.pj ? (/^https?:\/\//i.test(txt('pj').trim()) || parseFloat(c[cols.pj]) > 0 || /^(oui|x|1)$/i.test(txt('pj').trim())) : false,
+          pjUrl: cols.pj && /^https?:\/\//i.test(txt('pj').trim()) ? txt('pj').trim() : '',
         };
         last.ms = r2(last.d - last.c);
         cur.lines.push(last);
@@ -1072,6 +1078,9 @@
     return d.link ? d.link + '/preview?y=1400' : '';
   }
   async function loadDocs(l) {
+    // (v2.15) lignes lues dans le grand livre (filtres Fournisseurs / Clients) : lien GED de la colonne
+    // « Pièce jointe » ; aperçu = <lien>/preview (image, vérifié en direct)
+    if (!l.entryId && l.pjUrl) return [{ name: 'Pièce jointe', link: l.pjUrl, big: l.pjUrl + '/preview?y=1400', download: '', id: null }];
     if (!l.entryId) return [];
     if (docCache.has(l.entryId)) return docCache.get(l.entryId);
     const raw = await getJson('/document/all_types?location=ENTRIES&objectId=' + l.entryId);
@@ -1137,7 +1146,7 @@
       try { docs = await loadDocs(l); } catch (e) { apiLog.push('ERR docs ' + e.message); toast('Pièces jointes : ' + e.message); return; }
       hidePjPreview();
       const p = document.getElementById(PANEL_ID);
-      if (!p || !l.entryId || !docs.length) return;
+      if (!p || !(l.entryId || l.pjUrl) || !docs.length) return;
       const pr = p.getBoundingClientRect();
       const box = document.createElement('div');
       box.id = 'tmbc-cp-pjprev';

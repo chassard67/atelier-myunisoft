@@ -1,8 +1,15 @@
 // ==UserScript==
 // @name         MyUnisoft – Balance : vue 100% personnalisée (v2, API directe)
 // @namespace    https://nicolas.chassard/myunisoft
-// @version      4.2-ext
-// @description  v4.2 (2026-11-13, retours de Nicolas) : (1) Imprimer / Export Excel / ✕ ne sont plus collés au bord droit
+// @version      4.3-ext
+// @description  v4.3 (2026-11-13, retours de Nicolas) : (1) Échap ne ferme plus la surimpression (✕ uniquement) ;
+//               (2) légende du bas et texte « Glisser le curseur · ← → mois par mois » retirés ; (3) colonnes
+//               déplaçables par glisser-déposer de l'en-tête (ordre mémorisé par dossier, comme Consultation Premium) ;
+//               (4) au-dessus des cases, en ligne de filtres : bouton « tout déplier / replier » en Sous-totaux avec
+//               regroupements, sinon case « tout sélectionner » (comptes affichés) ; (5) ouverture sur l'exercice N
+//               (celui qui contient aujourd'hui) même si MyUnisoft propose N+1 ; (6) curseur : exercices N et N+1,
+//               séparation entre les deux et étiquettes « N » / « N+1 » au-dessus de la barre.
+//               v4.2 (2026-11-13, retours de Nicolas) : (1) Imprimer / Export Excel / ✕ ne sont plus collés au bord droit
 //               de l'écran : l'en-tête et la zone de droite (curseur, bandeau, tableau) s'arrêtent au bord droit du
 //               tableau (recalculé à chaque affichage et après un redimensionnement de colonne) ; (2) « Affichage
 //               trimestriel » (T1…T4 = somme de 3 mois de month_values + Total) et « Affichage trimestriel cumulé »
@@ -429,6 +436,7 @@
     fiscalYears: [], // [{start,end,label}]
     loading: false,
     error: null,
+    columnOrder: [], // (v4.3) ordre des colonnes choisi par glisser-déposer des en-têtes
     columnWidths: {}, // { colId: '123px' } — largeurs ajustées manuellement
     commentCounts: {}, // { id_account: nombre de commentaires } — rempli à la demande (voir refreshCommentCounts)
     aged: false, // "Balance âgée" (uniquement Client/Fournisseur) — voir buildAgedApiUrl
@@ -447,7 +455,7 @@
   const OPTS_KEYS = [
     'subtype', 'filterRange', 'filterRangeUserEdited', 'unbalancedOnly', 'centralizeAccount',
     'unvalidatedOnly', 'showRevisionCols', 'amountMode', 'showSubtotals', 'showClassSubtotals',
-    'showMonthly', 'showMonthlyCumulative', 'showQuarterly', 'showQuarterlyCumulative', 'compareN1', 'aged', 'agedCompareTo', 'columnWidths',
+    'showMonthly', 'showMonthlyCumulative', 'showQuarterly', 'showQuarterlyCumulative', 'compareN1', 'aged', 'agedCompareTo', 'columnWidths', 'columnOrder',
   ];
   // Options qui changent la requête serveur : un écart avec ce qui a été
   // reniflé impose un rechargement.
@@ -1054,8 +1062,10 @@
       applySniffedData();
       const reload = restoreOpts();
       installCustomUI();
-      if (reload) loadBalance();
-      else if (state.compareN1) loadN2();
+      if (!openOnCurrentExercise()) {
+        if (reload) loadBalance();
+        else if (state.compareN1) loadN2();
+      }
       return;
     }
     if (bootstrapTimer) return; // sondage déjà en cours, on ne relance rien de plus
@@ -1072,8 +1082,10 @@
         applySniffedData();
         const reload = restoreOpts();
         installCustomUI();
-        if (reload) loadBalance();
-        else if (state.compareN1) loadN2();
+        if (!openOnCurrentExercise()) {
+          if (reload) loadBalance();
+          else if (state.compareN1) loadN2();
+        }
         return;
       }
       // On ne clique le bouton natif qu'une seule fois : le rechargement en
@@ -1338,9 +1350,7 @@
         t.blur();
         return;
       }
-      e.preventDefault();
-      e.stopPropagation();
-      closeOverlay();
+      // (v4.3, demandé par Nicolas) Échap ne ferme plus la surimpression (✕ uniquement).
     },
     true
   );
@@ -2123,7 +2133,26 @@
     }
     return d._tmbAnyPj;
   }
+  // (v4.3) Ordre choisi par glisser-déposer (comme Consultation Premium) : les
+  // colonnes connues suivent l'ordre mémorisé, une colonne absente de l'ordre
+  // (nouveau mode d'affichage) reste juste après sa voisine de gauche. La
+  // colonne de dépli / sélection reste toujours en tête.
+  function applyColumnOrder(cols) {
+    const order = Array.isArray(state.columnOrder) ? state.columnOrder : [];
+    if (!order.length) return cols;
+    let last = -1;
+    const ranked = cols.map((c, i) => {
+      const k = order.indexOf(c.id);
+      if (c.id === 'expand') return { c, r: -1e9 };
+      if (k >= 0) last = k;
+      return { c, r: k >= 0 ? k : last + 0.001 * (i + 1) };
+    });
+    return ranked.sort((a, b) => a.r - b.r).map((x) => x.c);
+  }
   function visibleColumns() {
+    return applyColumnOrder(visibleColumnsRaw());
+  }
+  function visibleColumnsRaw() {
     let cols = allColumns();
     if (!state.compareN1) cols = cols.filter((c) => !c.n1);
     if (!state.showRevisionCols) return cols.filter((c) => !REVISION_COLUMN_IDS.has(c.id));
@@ -2275,6 +2304,23 @@
     return leaves.map((node) => ({ node, depth: 0, hasChildren: false }));
   }
 
+  // (v4.3) Clés de tous les regroupements (tous niveaux), calculées comme dans
+  // buildVisibleRows (vue hiérarchique).
+  function allGroupKeys() {
+    const data = (state.data && state.data.data) || [];
+    const out = [];
+    (function walk(nodes, pathPrefix) {
+      sortNodes(nodes).forEach((node, i) => {
+        const key = pathPrefix + '/' + i + '_' + (node.account_number || node.label);
+        if (node.account_List && node.account_List.length) {
+          out.push(key);
+          walk(node.account_List, key);
+        }
+      });
+    })(data, 'root');
+    return out;
+  }
+
   function buildVisibleRows() {
     if (state.aged) return buildAgedVisibleRows();
     const hasFilters = hasActiveFilters();
@@ -2314,7 +2360,8 @@
       return leaves.map((node) => ({ node, depth: 0, hasChildren: false }));
     }
 
-    // Vue hiérarchique normale : dépliable/repliable, tri à chaque niveau.
+    // Vue hiérarchique normale : dépliable/repliable, tri à chaque niveau
+    // (mêmes clés que allGroupKeys, qui sert au bouton « tout déplier »).
     const out = [];
     function walk(nodes, depth, pathPrefix) {
       const sorted = sortNodes(nodes);
@@ -2435,13 +2482,22 @@
       // des flèches déplier/replier) n'affiche jamais de libellé : c'est là
       // qu'on loge le bouton d'export Excel du tableau tel qu'affiché.
       const label = c.id === 'expand' ? '' : c.label;
-      return `<th data-col="${c.id}" class="${c.sortable ? 'tmb-sortable ' + sortCls : ''}${c.yearStart ? ' tmb-year-start' : ''}" style="${width ? 'width:' + width + ';' : ''}text-align:${c.align || 'left'} !important"><span class="tmb-th-label">${label}</span>${resizer}</th>`;
+      return `<th data-col="${c.id}"${c.id !== 'expand' ? ' draggable="true"' : ''} class="${c.sortable ? 'tmb-sortable ' + sortCls : ''}${c.yearStart ? ' tmb-year-start' : ''}" style="${width ? 'width:' + width + ';' : ''}text-align:${c.align || 'left'} !important"><span class="tmb-th-label">${label}</span>${resizer}</th>`;
     }).join('');
   }
 
   function renderFilterRow() {
     return visibleColumns().map((c) => {
-      if (c.id === 'expand') return '<th data-col="expand"></th>';
+      if (c.id === 'expand') {
+        // (v4.3) Sous-totaux avec regroupements : bouton « tout déplier / replier » ;
+        // sinon : case « tout sélectionner » (comptes affichés).
+        if (state.showSubtotals && !state.aged && !state.showClassSubtotals) {
+          const all = allGroupKeys();
+          const open = all.length && all.every((k) => state.expanded.has(k));
+          return `<th data-col="expand"><button type="button" id="tmb-expand-all" class="tmb-expand-all" title="${open ? 'Tout replier' : 'Tout déplier'}">${open ? '⊟' : '⊞'}</button></th>`;
+        }
+        return '<th data-col="expand"><input type="checkbox" id="tmb-select-all" title="Tout sélectionner / désélectionner (comptes affichés)"/></th>';
+      }
       return `<th data-col="${c.id}"><input type="text" class="tmb-filter-input" data-col="${c.id}" value="${state.filterText[c.id] || ''}"/></th>`;
     }).join('');
   }
@@ -3074,14 +3130,29 @@
   function fyContaining(iso) {
     return state.fiscalYears.find((f) => f.start <= iso && iso <= f.end) || null;
   }
-  // (v4.1) Mois proposés : uniquement ceux de l'exercice affiché (N) ; les
-  // autres exercices passent par le sélecteur « Exercice(s) ».
+  // (v4.3) Mois proposés : exercice N (celui qui contient aujourd'hui) et N+1
+  // s'il existe ; si l'exercice affiché est un autre exercice (choisi dans
+  // « Exercice(s) »), cet exercice et le suivant.
+  const todayIso = () => new Date().toISOString().slice(0, 10);
+  function exerciseTag(fys, fy) {
+    const t = fyContaining(todayIso());
+    const ti = t ? fys.indexOf(fys.find((f) => f.start === t.start)) : -1;
+    const i = fys.indexOf(fy);
+    if (ti < 0 || i < 0) return fy.start.slice(0, 4);
+    const d = i - ti;
+    return d === 0 ? 'N' : d > 0 ? 'N+' + d : 'N' + d;
+  }
   function timelineModel() {
     const fys = state.fiscalYears.slice().sort((a, b) => (a.start < b.start ? -1 : 1));
     if (!fys.length || !state.endDate) return null;
-    const cur = fyContaining(state.endDate) || fyContaining(state.startDate) || fys[fys.length - 1];
-    const from = cur;
-    const to = cur;
+    const cur0 = fyContaining(state.endDate) || fyContaining(state.startDate) || fys[fys.length - 1];
+    const cur = fys.find((f) => f.start === cur0.start) || cur0;
+    const t0 = fyContaining(todayIso());
+    const tFy = t0 ? fys.find((f) => f.start === t0.start) : null;
+    const ci = fys.indexOf(cur);
+    const from = tFy && (cur === tFy || ci === fys.indexOf(tFy) + 1) ? tFy : cur;
+    const to = fys[fys.indexOf(from) + 1] || from;
+    const segs = (to === from ? [from] : [from, to]).map((f) => ({ fy: f, tag: exerciseTag(fys, f) }));
     const months = [];
     let y = Number(from.start.slice(0, 4));
     let m = Number(from.start.slice(5, 7)) - 1;
@@ -3098,7 +3169,7 @@
     if (!months.length) return null;
     let idx = months.findIndex((x) => x.end >= state.endDate);
     if (idx < 0) idx = months.length - 1;
-    return { months, idx, cur, fys };
+    return { months, idx, cur, fys, segs };
   }
   function timelineLabel(model, i) {
     const mo = model.months[i];
@@ -3126,14 +3197,25 @@
         return `<div class="tmb-tl-tick" style="left:${pos(i)}%"><i style="height:${edge ? 11 : 6}px"></i><span>${pad2(x.m + 1)}</span></div>`;
       })
       .join('');
+    // (v4.3) étiquettes d'exercice (N, N+1…) au-dessus de la barre et séparation entre exercices
+    const segHtml = model.segs
+      .map((sg, k) => {
+        const a = model.months.findIndex((x) => x.end >= sg.fy.start);
+        let b = model.months.findIndex((x) => x.end >= sg.fy.end);
+        if (b < 0) b = n - 1;
+        const left = (Math.max(0, a) / n) * 100;
+        const right = ((b + 1) / n) * 100;
+        const sep = k > 0 ? `<div class="tmb-tl-sep" style="left:${left}%"></div>` : '';
+        return sep + `<div class="tmb-tl-seg" style="left:${left}%;width:${right - left}%" title="Exercice du ${isoToFrDate(sg.fy.start)} au ${isoToFrDate(sg.fy.end)}">${sg.tag}</div>`;
+      })
+      .join('');
     return `
       <div class="tmb-tl">
         <div class="tmb-tl-head">
           <b>Arrêté au</b><b class="tmb-tl-date">${lab.date}</b><span class="tmb-tl-status">${lab.status}</span>
-          <div style="flex:1"></div>
-          <span class="tmb-tl-hint">Glisser le curseur · <b>← →</b> mois par mois</span>
         </div>
         <div class="tmb-tl-zone">
+          ${segHtml}
           <div class="tmb-tl-track"></div>
           <div class="tmb-tl-ex" style="left:${exL}%;width:${exW}%" title="Exercice en cours"></div>
           <div class="tmb-tl-fill" style="width:${pos(model.idx)}%"></div>
@@ -3225,7 +3307,7 @@
         <div style="flex:1"></div>
         <button type="button" id="tmb-print" class="tmb-btn">Imprimer</button>
         <button type="button" id="tmb-export-btn" class="tmb-btn tmb-btn-primary" title="Exporter le tableau affiché vers Excel">Export Excel</button>
-        <button type="button" id="tmb-close" class="tmb-btn tmb-btn-x" aria-label="Fermer (retour à la balance MyUnisoft)" title="Fermer (Échap)">✕</button>
+        <button type="button" id="tmb-close" class="tmb-btn tmb-btn-x" aria-label="Fermer (retour à la balance MyUnisoft)" title="Fermer (retour à la balance MyUnisoft)">✕</button>
       </div>
       <div class="tmb-shell">
         <div class="tmb-options">${renderOptionsPanel()}</div>
@@ -3233,7 +3315,6 @@
           ${state.aged ? '' : renderTimeline()}
           ${renderBars()}
           <div class="tmb-table-wrap">${renderTablePanel()}</div>
-          <div class="tmb-hints"><span><b>Clic</b> n° de compte ou montant : consultation du compte</span><span><b>Maj+clic</b> nouvelle fenêtre</span><span><b>▼ / ▶</b> replier / déplier</span><span><b>Échap</b> ou <b>✕</b> retour à la balance MyUnisoft</span></div>
         </div>
       </div>
     `;
@@ -3352,6 +3433,29 @@
 
   // Changement d'exercice : pilote le sélecteur natif « Exercice(s) » pour
   // obtenir le dossier_revision_id de cet exercice (jamais recalculé).
+  // (v4.3) À l'ouverture, la balance s'affiche sur l'exercice N (celui qui
+  // contient aujourd'hui) même si MyUnisoft propose un autre exercice
+  // (ex. N+1 déjà créé) : on pilote alors le sélecteur natif comme pour un
+  // changement d'exercice. Renvoie true si un changement a été lancé.
+  function openOnCurrentExercise() {
+    const t = todayIso();
+    const i = state.fiscalYears.findIndex((f) => f.start <= t && t <= f.end);
+    if (i < 0) return false;
+    const f = state.fiscalYears[i];
+    if (state.startDate === f.start && state.endDate === f.end) return false;
+    const prev = { s: state.startDate, e: state.endDate };
+    selectFiscalYear(i).then((ok) => {
+      if (ok) return;
+      // sélecteur natif indisponible : on reste sur l'exercice proposé par MyUnisoft
+      state.startDate = prev.s;
+      state.endDate = prev.e;
+      state.error = null;
+      renderApp();
+      if (state.compareN1) loadN2();
+    });
+    return true;
+  }
+
   async function selectFiscalYear(idx) {
     if (idx < 0 || !state.fiscalYears[idx]) return;
     state.startDate = state.fiscalYears[idx].start;
@@ -3367,9 +3471,10 @@
         "Impossible de changer d'exercice automatiquement (le sélecteur natif « Exercice(s) » n'a pas répondu). " +
         'Choisissez l\'exercice dans la balance MyUnisoft (sous cette fenêtre), puis rouvrez Balance Premium.';
       renderApp();
-      return;
+      return false;
     }
     loadBalance();
+    return true;
   }
 
   // -----------------------------------------------------------------------
@@ -3576,6 +3681,29 @@
       });
     });
 
+    // (v4.3) Tout déplier / replier ; tout sélectionner
+    const expandAll = root.querySelector('#tmb-expand-all');
+    if (expandAll)
+      expandAll.addEventListener('click', () => {
+        const all = allGroupKeys();
+        if (all.length && all.every((k) => state.expanded.has(k))) state.expanded = new Set();
+        else state.expanded = new Set(all);
+        renderApp();
+      });
+    const selAll = root.querySelector('#tmb-select-all');
+    if (selAll) {
+      const keys = Array.from(root.querySelectorAll('.tmb-select-checkbox')).map((el) => el.dataset.selKey).filter(Boolean);
+      const n = keys.filter((k) => state.selectedKeys.has(k)).length;
+      selAll.checked = keys.length > 0 && n === keys.length;
+      selAll.indeterminate = n > 0 && n < keys.length;
+      selAll.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (selAll.checked) keys.forEach((k) => state.selectedKeys.add(k));
+        else keys.forEach((k) => state.selectedKeys.delete(k));
+        renderApp();
+      });
+    }
+
     // Déplier / replier
     root.querySelectorAll('.tmb-expand-toggle').forEach((span) => {
       span.addEventListener('click', () => {
@@ -3703,6 +3831,49 @@
   }
 
   function attachColumnResize(root) {
+    // (v4.3) Déplacement des colonnes : glisser-déposer d'un en-tête sur un autre.
+    let dragCol = null;
+    root.querySelectorAll('.tmb-head-row th[draggable="true"]').forEach((th) => {
+      th.addEventListener('dragstart', (e) => {
+        if (e.target && e.target.classList && e.target.classList.contains('tmb-col-resizer')) {
+          e.preventDefault();
+          return;
+        }
+        dragCol = th.dataset.col;
+        try {
+          e.dataTransfer.effectAllowed = 'move';
+          e.dataTransfer.setData('text/plain', dragCol);
+        } catch (err) {
+          /* ignore */
+        }
+      });
+      th.addEventListener('dragover', (e) => {
+        if (!dragCol || dragCol === th.dataset.col) return;
+        e.preventDefault();
+        th.classList.add('tmb-dragover');
+      });
+      th.addEventListener('dragleave', () => th.classList.remove('tmb-dragover'));
+      th.addEventListener('drop', (e) => {
+        e.preventDefault();
+        th.classList.remove('tmb-dragover');
+        const target = th.dataset.col;
+        if (!dragCol || dragCol === target) return;
+        const ids = visibleColumns().map((c) => c.id).filter((id) => id !== 'expand');
+        const from = ids.indexOf(dragCol);
+        if (from < 0) return;
+        ids.splice(from, 1);
+        const to = ids.indexOf(target);
+        ids.splice(to < 0 ? ids.length : from <= to ? to + 1 : to, 0, dragCol);
+        const prev = (Array.isArray(state.columnOrder) ? state.columnOrder : []).filter((id) => !ids.includes(id));
+        state.columnOrder = ids.concat(prev);
+        dragCol = null;
+        renderApp();
+      });
+      th.addEventListener('dragend', () => {
+        dragCol = null;
+      });
+    });
+
     root.querySelectorAll('.tmb-col-resizer').forEach((handle) => {
       handle.addEventListener('click', (e) => e.stopPropagation());
       handle.addEventListener('dblclick', (e) => {
@@ -3801,17 +3972,19 @@
       #tmb-root .tmb-tl-status { color: #5b6b85; font-size: 12px; }
       #tmb-root .tmb-tl-hint { color: #5b6b85; font-size: 11px; }
       #tmb-root .tmb-tl-hint b { font-family: ${MONO}; color: #1b4f9c; }
-      #tmb-root .tmb-tl-zone { position: relative; height: 58px; margin: 4px 4px 0; width: 50%; min-width: 360px; max-width: calc(100% - 8px); }
-      #tmb-root .tmb-tl-track, #tmb-root .tmb-tl-ex, #tmb-root .tmb-tl-fill { position: absolute; top: 27px; height: 4px; border-radius: 2px; }
+      #tmb-root .tmb-tl-zone { position: relative; height: 74px; margin: 4px 4px 0; width: 50%; min-width: 520px; max-width: calc(100% - 8px); }
+      #tmb-root .tmb-tl-seg { position: absolute; top: 0; height: 14px; text-align: center; font-size: 11px; font-weight: 700; color: #1b4f9c; letter-spacing: .04em; pointer-events: none; }
+      #tmb-root .tmb-tl-sep { position: absolute; top: 0; height: 66px; width: 0; border-left: 2px dashed #8a9bb8; pointer-events: none; }
+      #tmb-root .tmb-tl-track, #tmb-root .tmb-tl-ex, #tmb-root .tmb-tl-fill { position: absolute; top: 43px; height: 4px; border-radius: 2px; }
       #tmb-root .tmb-tl-track { left: 0; right: 0; background: #d5dce8; }
       #tmb-root .tmb-tl-ex { background: #9db4d8; }
       #tmb-root .tmb-tl-fill { left: 0; background: #0f2a52; }
-      #tmb-root .tmb-tl-tick { position: absolute; top: 32px; width: 0; }
+      #tmb-root .tmb-tl-tick { position: absolute; top: 48px; width: 0; }
       #tmb-root .tmb-tl-tick i { display: block; width: 1px; background: #8a9bb8; margin: 0 auto; }
       #tmb-root .tmb-tl-tick span { display: block; margin-top: 2px; font-size: 10px; color: #5b6b85; white-space: nowrap; transform: translateX(-50%); }
-      #tmb-root .tmb-tl-label { position: absolute; top: 0; transform: translateX(-50%); background: #0f2a52; color: #fff; font-size: 11px; font-weight: 700; border-radius: 4px; padding: 2px 7px; white-space: nowrap; pointer-events: none; }
-      #tmb-root .tmb-tl-thumb { position: absolute; top: 21px; transform: translateX(-50%); width: 16px; height: 16px; border-radius: 50%; background: #f0b400; border: 3px solid #fff; box-shadow: 0 0 0 1px #0f2a52; pointer-events: none; }
-      #tmb-root #tmb-tl-range { position: absolute; left: -8px; width: calc(100% + 16px); top: 18px; height: 24px; margin: 0; opacity: 0; cursor: ew-resize; }
+      #tmb-root .tmb-tl-label { position: absolute; top: 16px; transform: translateX(-50%); background: #0f2a52; color: #fff; font-size: 11px; font-weight: 700; border-radius: 4px; padding: 2px 7px; white-space: nowrap; pointer-events: none; }
+      #tmb-root .tmb-tl-thumb { position: absolute; top: 37px; transform: translateX(-50%); width: 16px; height: 16px; border-radius: 50%; background: #f0b400; border: 3px solid #fff; box-shadow: 0 0 0 1px #0f2a52; pointer-events: none; }
+      #tmb-root #tmb-tl-range { position: absolute; left: -8px; width: calc(100% + 16px); top: 34px; height: 24px; margin: 0; opacity: 0; cursor: ew-resize; }
       #tmb-root #tmb-tl-range:focus-visible ~ .tmb-tl-thumb, #tmb-root #tmb-tl-range:focus ~ .tmb-tl-thumb { box-shadow: 0 0 0 1px #0f2a52, 0 0 0 4px #6a9be0; }
 
       /* Bandeaux */
@@ -3847,6 +4020,10 @@
       #tmb-root .tmb-mono, #tmb-root .tmb-table td[style*="right"] { font-family: ${MONO}; font-variant-numeric: tabular-nums; }
       #tmb-root .tmb-table td[data-col="account_number"] { font-family: ${MONO}; }
       #tmb-root .tmb-negative { color: #c62828; }
+      #tmb-root .tmb-expand-all { border: 1px solid #b8c2cf; background: #fff; color: #1b4f9c; border-radius: 4px; width: 22px; height: 22px; padding: 0; font-size: 14px; line-height: 18px; cursor: pointer; }
+      #tmb-root .tmb-expand-all:hover { background: #e4ecfa; }
+      #tmb-root .tmb-head-row th[draggable="true"] { cursor: grab; }
+      #tmb-root .tmb-head-row th.tmb-dragover { box-shadow: inset 3px 0 0 #1b4f9c; }
       #tmb-root .tmb-expand-toggle { cursor: pointer; display: inline-block; width: 14px; color: #1b4f9c; }
       #tmb-root .tmb-select-checkbox { cursor: pointer; margin: 0; vertical-align: middle; accent-color: #0f2a52; }
       #tmb-root .tmb-acct-link { color: #1b4f9c; cursor: pointer; text-decoration: underline; }
