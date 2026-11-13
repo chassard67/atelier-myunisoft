@@ -69,7 +69,10 @@ async function render() {
   $('last-check').textContent = 'vérifié : ' + fmtDate(state.lastCheck);
   $('ext-id').textContent = 'ID : ' + st.extensionId;
   $('base-url').value = cfg.baseUrl;
-  $('warn-source').hidden = cfg.baseUrl === st.defaultBaseUrl;
+  // Pas d'alerte si le service d'arrière-plan ne donne pas la source par défaut (extension pas encore
+  // rechargée après une mise à jour des fichiers) ; comparaison insensible à la barre finale.
+  const normUrl = (u) => String(u || '').trim().replace(/\/+$/, '');
+  $('warn-source').hidden = !st.defaultBaseUrl || normUrl(cfg.baseUrl) === normUrl(st.defaultBaseUrl);
   $('warn-source-url').textContent = cfg.baseUrl;
 
   // Bouton « Autoriser les scripts utilisateur » / mode développeur.

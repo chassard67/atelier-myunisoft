@@ -36,7 +36,7 @@ export const LICENCE_GRACE_DAYS = 14;
 
 // Notes affichées aux utilisateurs quand la COQUILLE elle-même est mise à jour.
 export const EXTENSION_NOTES = {
-  '1.1.2': ['Boutons « Vérifier les mises à jour » et « Recharger les onglets » placés en haut de la fenêtre de l\'extension.'],
+  '1.1.2': ['Boutons « Vérifier les mises à jour » et « Recharger les onglets » placés en haut de la fenêtre de l\'extension.', 'Plus d\'alerte « source non officielle » à tort.'],
   '1.1.1': ['Correctif : la clé de licence est prise en compte dès sa validation.'],
   '1.1.0': [
     'Fonctionnalités activables une à une depuis l\'icône de l\'extension.',
