@@ -2,11 +2,12 @@
   "minExtensionVersion": "1.1.0",
   "licenceRequired": true,
   "release": {
-    "version": "1.3.8",
+    "version": "1.3.9",
     "date": "2026-11-13",
     "notes": [
-      "Extension simplifiée : les anciens modules désactivés par défaut sont supprimés.",
-      "Réglages : « Agrandir les fenêtres popup » rejoint Affichage Premium ; Balance, Grand Livre et Consultation Premium sont regroupés sous « Fonctionnalités Premium »."
+      "Consultation Premium : filtre « Comptes d'attente et transitoires (47 et 58) », barre chronologique « Arrêté au » (N et N+1).",
+      "Consultation Premium : commentaire permanent puis annuel, avec PJ Permanent et PJ DR alignés à droite de chacun.",
+      "Consultation Premium : nouvelle colonne Taux TVA (TVA / HT de l'écriture), aussi dans l'export Excel."
     ]
   },
   "defaultMatches": [

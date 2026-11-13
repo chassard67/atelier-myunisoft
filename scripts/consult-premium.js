@@ -1,8 +1,14 @@
 // ==UserScript==
 // @name         MyUnisoft - Consultation Premium (page de consultation de compte maison)
 // @namespace    https://nicolas.chassard/myunisoft
-// @version      2.19-ext
-// @description  v2.19 (2026-11-13, retours de Nicolas) : (1) commentaire de compte en cours de saisie : enregistré sur le
+// @version      2.20-ext
+// @description  v2.20 (2026-11-13, demandé par Nicolas) : (1) filtre « Comptes d'attente et transitoires (47 et 58) » dans
+//               Comptes généraux ; (2) barre chronologique « Arrêté au » (exercices N et N+1, libellés MyUnisoft) entre la
+//               ligne Compte et la ligne Lettrage : le curseur fixe la date de fin ; (3) commentaire permanent avant
+//               l'annuel, PJ Permanent à droite du commentaire permanent et PJ DR à droite de l'annuel ; (4) colonne
+//               Taux TVA = TVA (445) / HT (6, 7, 2) de l'écriture, lue sur toutes ses lignes (fournisseur, client, TVA,
+//               charge ou produit), aussi dans l'export Excel.
+//               v2.19 (2026-11-13, retours de Nicolas) : (1) commentaire de compte en cours de saisie : enregistré sur le
 //               compte qu'on quitte au changement de compte, jamais sur le nouveau ; (2) zone « Déposer une pièce » retirée
 //               (dépôt sur la ligne ou sur PJ Permanent / PJ DR) ; (3) surbrillance nette des boutons PJ pendant un
 //               glisser-déposer ; (4) re-clic sur la ligne active = désélection ; (5) survol de PJ Permanent / PJ DR :
@@ -320,6 +326,8 @@
     { key: 'cvide', side: 'client', label: 'Clients avec intitulé de compte vide', test: (a) => !a.label },
     { key: 'pg', side: 'plan', label: 'Tous les comptes généraux', test: (a) => /^\d+$/.test(a.num) && !/^(40|41)/.test(a.num) },
     { key: 'p67', side: 'plan', label: 'Comptes 6 et 7 uniquement', test: (a) => /^[67]/.test(a.num) },
+    // (v2.20) comptes d'attente et transitoires
+    { key: 'p4758', side: 'plan', label: 'Comptes d\'attente et transitoires (47 et 58)', test: (a) => /^(47|58)/.test(a.num) },
   ];
   function cutoff60() {
     const d = new Date(Date.now() - 60 * 86400000);
@@ -686,7 +694,7 @@
     { k: 'lib', w: 300, t: 'Libellé', sort: 'lib' },
     // (v2.11) Lettrage entre Débit et Crédit (demande de Nicolas).
     { k: 'deb', w: 112, t: 'Débit', sort: 'd', num: true }, { k: 'lett', w: 78, t: 'Lettrage', sort: 'lett' }, { k: 'cre', w: 112, t: 'Crédit', sort: 'c', num: true },
-    { k: 'solde', w: 120, t: 'Solde', sort: 'solde', num: true }, { k: 'ms', w: 124, t: 'Montant signé', sort: 'ms', num: true }, { k: 'piece', w: 130, t: 'Pièce', sort: 'piece' }, { k: 'cpttc', w: 104, t: 'Compte TTC', sort: 'cpttc' }, { k: 'cpht', w: 104, t: 'Compte HT', sort: 'cpht' }, { k: 'cptva', w: 104, t: 'Compte TVA', sort: 'cptva' },
+    { k: 'solde', w: 120, t: 'Solde', sort: 'solde', num: true }, { k: 'ms', w: 124, t: 'Montant signé', sort: 'ms', num: true }, { k: 'piece', w: 130, t: 'Pièce', sort: 'piece' }, { k: 'cpttc', w: 104, t: 'Compte TTC', sort: 'cpttc' }, { k: 'cpht', w: 104, t: 'Compte HT', sort: 'cpht' }, { k: 'cptva', w: 104, t: 'Compte TVA', sort: 'cptva' }, { k: 'tva', w: 82, t: 'Taux TVA', sort: 'tva', num: true },
     { k: 'pj', w: 54, t: 'PJ' }, { k: 'ech', w: 98, t: 'Échéance', sort: 'ech' }, { k: 'com', w: 230, t: 'Commentaire', sort: 'com' },
     { k: 'who', w: 130, t: 'Saisi par', sort: 'who' },
   ];
@@ -695,6 +703,11 @@
     try {
       const o = JSON.parse(localStorage.getItem(COLORD_KEY) || '[]');
       if (!Array.isArray(o) || !o.length) return;
+      // (v2.20) nouvelle colonne Taux TVA placée après Compte TVA
+      if (!o.includes('tva') && o.includes('cptva')) {
+        o.splice(o.indexOf('cptva') + 1, 0, 'tva');
+        localStorage.setItem(COLORD_KEY, JSON.stringify(o));
+      }
       // (v2.13) Ancienne colonne « N° » (v2.12) retirée de l'ordre mémorisé.
       if (o.includes('no')) {
         o.splice(o.indexOf('no'), 1);
@@ -970,8 +983,24 @@
     return Object.keys(by).sort().map((k) => by[k]);
   }
   function cpFull(l, key) { return cpGroups(l, key).map((g) => g.num).join(' '); }
+  // (v2.20) Taux de TVA de l'écriture = TVA (comptes 445) / HT (comptes 6, 7 et 2), lu sur toutes les
+  // lignes de l'écriture : même résultat depuis un compte fournisseur, client, de TVA, de charge ou de produit.
+  function tvaRate(l) {
+    if (!cpEligible(l)) return null;
+    const lines = entCache.get(l.entryId);
+    if (!lines || !lines.length) return null;
+    let tva = 0, ht = 0;
+    lines.forEach((x) => {
+      const m = Math.abs((x.d || 0) - (x.c || 0));
+      if (/^445/.test(x.num)) tva += m;
+      else if (/^[267]/.test(x.num)) ht += m;
+    });
+    if (!ht) return null;
+    return r2((tva / ht) * 100);
+  }
+  const fmtRate = (v) => (v == null ? '' : (Math.abs(v - Math.round(v)) < 0.05 ? String(Math.round(v)) : v.toLocaleString('fr-FR', { minimumFractionDigits: 1, maximumFractionDigits: 2 })) + ' %');
   function applyCp() {
-    S.lines.forEach((l) => { ['cpttc', 'cpht', 'cptva'].forEach((k) => { l[k] = cpFull(l, k); }); });
+    S.lines.forEach((l) => { ['cpttc', 'cpht', 'cptva'].forEach((k) => { l[k] = cpFull(l, k); }); l.tva = tvaRate(l); });
   }
   function cpCell(l, key) {
     const g = cpGroups(l, key);
@@ -1305,8 +1334,7 @@
   async function refreshAccPj() {
     const p = document.getElementById(PANEL_ID);
     if (!p) return;
-    const box = p.querySelector('[data-accpj]');
-    if (!box) return;
+    const box = p;
     const set = (kind, state, text, title) => {
       const el = box.querySelector('[data-pjk="' + kind + '"]');
       if (!el) return;
@@ -1587,6 +1615,86 @@
     }, 400);
   }
 
+  // (v2.20) Barre chronologique « Arrêté au » (comme Balance Premium) : exercices N et N+1 (libellés
+  // MyUnisoft, GET /exercices), un cran par fin de mois ; le curseur fixe la date de fin (Au), la date
+  // de début (Du) ne change que si elle devient postérieure (début de l'exercice concerné).
+  const exLabCache = {};
+  async function loadExercisesLabeled() {
+    const soc = societyId();
+    if (!soc) return [];
+    if (exLabCache[soc]) return exLabCache[soc];
+    try {
+      const raw = await getJson('/exercices?society_id=' + encodeURIComponent(soc));
+      exLabCache[soc] = (Array.isArray(raw) ? raw : [])
+        .filter((e) => e && /^\d{4}-\d{2}-\d{2}/.test(String(e.start_date || '')) && /^\d{4}-\d{2}-\d{2}/.test(String(e.end_date || '')))
+        .map((e) => ({ start: String(e.start_date).slice(0, 10), end: String(e.end_date).slice(0, 10), label: String(e.label || '') }))
+        .sort((x, y) => (x.start < y.start ? -1 : 1));
+    } catch (e) { exLabCache[soc] = []; }
+    return exLabCache[soc];
+  }
+  const p2 = (n) => String(n).padStart(2, '0');
+  const monthEnd = (y, m) => y + '-' + p2(m + 1) + '-' + p2(new Date(y, m + 1, 0).getDate());
+  function cpTimelineModel() {
+    const fys = exLabCache[societyId()] || [];
+    if (!fys.length || !S.end) return null;
+    const today = new Date().toISOString().slice(0, 10);
+    const nFy = fys.find((f) => f.label === 'N') || fys.find((f) => f.start <= today && today <= f.end) || fys[fys.length - 1];
+    const cur = fys.find((f) => f.start <= S.end && S.end <= f.end) || nFy;
+    const ci = fys.indexOf(cur), ni = fys.indexOf(nFy);
+    const from = cur === nFy || ci === ni + 1 ? nFy : cur;
+    const to = fys[fys.indexOf(from) + 1] || from;
+    const months = [];
+    let y = +from.start.slice(0, 4), m = +from.start.slice(5, 7) - 1;
+    for (let g = 0; g < 40; g++) {
+      const e = monthEnd(y, m);
+      if (e > to.end) break;
+      months.push({ y, m, end: e });
+      m++; if (m > 11) { m = 0; y++; }
+    }
+    if (!months.length) return null;
+    let idx = months.findIndex((x) => x.end >= S.end);
+    if (idx < 0) idx = months.length - 1;
+    const segs = (to === from ? [from] : [from, to]).map((f) => ({ f, tag: f.label || (f.start.slice(0, 4) + (f.end.slice(0, 4) !== f.start.slice(0, 4) ? '/' + f.end.slice(0, 4) : '')) }));
+    return { months, idx, segs, fys };
+  }
+  function renderCpTimeline() {
+    const p = document.getElementById(PANEL_ID);
+    const host = p && p.querySelector('[data-cptl]');
+    if (!host) return;
+    const md = cpTimelineModel();
+    if (!md) { host.innerHTML = ''; return; }
+    const n = md.months.length;
+    const pos = (i) => ((i + 0.5) / n) * 100;
+    const ticks = md.months.map((x, i) => '<div class="tl-tick" style="left:' + pos(i) + '%"><i style="height:' + (i === 0 || i === n - 1 ? 9 : 5) + 'px"></i><span>' + p2(x.m + 1) + '</span></div>').join('');
+    const segs = md.segs.map((sg, k) => {
+      const a0 = md.months.findIndex((x) => x.end >= sg.f.start);
+      let b0 = md.months.findIndex((x) => x.end >= sg.f.end); if (b0 < 0) b0 = n - 1;
+      const l0 = (Math.max(0, a0) / n) * 100, r0 = ((b0 + 1) / n) * 100;
+      return (k ? '<div class="tl-sep" style="left:' + l0 + '%"></div>' : '') + '<div class="tl-seg" style="left:' + l0 + '%;width:' + (r0 - l0) + '%" title="Exercice du ' + isoToFr(sg.f.start) + ' au ' + isoToFr(sg.f.end) + '">' + esc(sg.tag) + '</div>';
+    }).join('');
+    const mo = md.months[md.idx];
+    host.innerHTML = '<div class="cp-tl"><span class="tl-title">Arrêté au</span><div class="tl-zone">' + segs + '<div class="tl-track"></div><div class="tl-fill" style="width:' + pos(md.idx) + '%"></div>' + ticks +
+      '<span class="tl-label" style="left:' + pos(md.idx) + '%">' + p2(mo.m + 1) + '/' + mo.y + '</span><span class="tl-thumb" style="left:' + pos(md.idx) + '%"></span>' +
+      '<input type="range" data-tlr min="0" max="' + (n - 1) + '" step="1" value="' + md.idx + '" aria-label="Arrêté au (fin de mois)"></div></div>';
+    const r = host.querySelector('[data-tlr]');
+    r.addEventListener('input', () => {
+      const i = +r.value, x = md.months[i];
+      host.querySelector('.tl-label').style.left = pos(i) + '%';
+      host.querySelector('.tl-label').textContent = p2(x.m + 1) + '/' + x.y;
+      host.querySelector('.tl-thumb').style.left = pos(i) + '%';
+      host.querySelector('.tl-fill').style.width = pos(i) + '%';
+    });
+    r.addEventListener('change', () => {
+      const x = md.months[+r.value];
+      if (!x || x.end === S.end) return;
+      S.end = x.end;
+      if (S.start > S.end) { const f = md.fys.find((ff) => ff.start <= x.end && x.end <= ff.end); S.start = f ? f.start : x.end.slice(0, 8) + '01'; }
+      p.querySelector('[data-start]').value = isoToFr(S.start);
+      p.querySelector('[data-end]').value = isoToFr(S.end);
+      afterPeriodChange();
+    });
+  }
+
   function showPanel() {
     closePanel();
     loadColW(); loadColOrder();
@@ -1599,7 +1707,7 @@
     const headParts = () => ({
       cg: COLS.map((c) => '<col style="width:' + c.w + 'px">').join(''),
       h1: COLS.map((c) => c.k === 'chk' ? '<th class="h" style="text-align:right;padding-right:9px"><input data-all type="checkbox" aria-label="Tout sélectionner"></th>' : '<th class="h' + (c.sort ? ' s' : '') + (c.num ? ' n' : '') + '" data-col="' + c.k + '"' + (c.sort ? ' data-sort="' + c.sort + '"' : '') + '>' + c.t + ' <span data-arrow="' + (c.sort || '') + '"></span><span class="rz" data-rz="' + c.k + '"></span></th>').join(''),
-      h2: COLS.map((c) => (c.k === 'chk' || c.k === 'pj') ? '<th style="background:#fbfcfe;position:sticky;top:34px;z-index:2;border-bottom:1px solid #aebbd0;border-right:1px solid #c3cddd"></th>' : thFilter(c.k)).join(''),
+      h2: COLS.map((c) => (c.k === 'chk' || c.k === 'pj' || c.k === 'tva') ? '<th style="background:#fbfcfe;position:sticky;top:34px;z-index:2;border-bottom:1px solid #aebbd0;border-right:1px solid #c3cddd"></th>' : thFilter(c.k)).join(''),
     });
     S.rebuildHead = () => {
       const pp = document.getElementById(PANEL_ID);
@@ -1630,6 +1738,15 @@
       '#' + PANEL_ID + ' tbody tr.tot td{background:#b4c6e7;font-weight:700;color:var(--tmbc-primary,#0f2a52);border-top:2px solid var(--tmbc-primary,#0f2a52)}#' + PANEL_ID + ' tbody tr.tot2 td{background:#dbe5f5;color:var(--tmbc-primary,#0f2a52)}#' + PANEL_ID + ' tbody tr.tot3 td{background:#fff0b3;color:var(--tmbc-primary,#0f2a52);font-weight:700}' +
       '#' + PANEL_ID + ' tbody tr.sel{background:#fff4cc}#' + PANEL_ID + ' tbody tr.act{background:#dbe8fb!important}' +
       '#' + PANEL_ID + ' input:focus,#' + PANEL_ID + ' select:focus{outline:2px solid #6a9be0;outline-offset:0}' +
+      '#' + PANEL_ID + ' .cp-tl{display:flex;align-items:center;gap:14px}#' + PANEL_ID + ' .tl-title{font-size:11px;color:#5b6b85;white-space:nowrap}' +
+      '#' + PANEL_ID + ' .tl-zone{position:relative;height:58px;flex:1;min-width:420px;max-width:760px}' +
+      '#' + PANEL_ID + ' .tl-seg{position:absolute;top:0;height:13px;text-align:center;font-size:10px;font-weight:700;color:#1b4f9c;pointer-events:none}' +
+      '#' + PANEL_ID + ' .tl-sep{position:absolute;top:0;height:52px;border-left:2px dashed #8a9bb8;pointer-events:none}' +
+      '#' + PANEL_ID + ' .tl-track,#' + PANEL_ID + ' .tl-fill{position:absolute;top:33px;height:4px;border-radius:2px}#' + PANEL_ID + ' .tl-track{left:0;right:0;background:#d5dce8}#' + PANEL_ID + ' .tl-fill{left:0;background:var(--tmbc-primary,#0f2a52)}' +
+      '#' + PANEL_ID + ' .tl-tick{position:absolute;top:38px;width:0}#' + PANEL_ID + ' .tl-tick i{display:block;width:1px;background:#8a9bb8;margin:0 auto}#' + PANEL_ID + ' .tl-tick span{display:block;font-size:9px;color:#5b6b85;transform:translateX(-50%);white-space:nowrap}' +
+      '#' + PANEL_ID + ' .tl-label{position:absolute;top:13px;transform:translateX(-50%);background:var(--tmbc-primary,#0f2a52);color:#fff;font-size:10px;font-weight:700;border-radius:4px;padding:1px 6px;white-space:nowrap;pointer-events:none}' +
+      '#' + PANEL_ID + ' .tl-thumb{position:absolute;top:28px;transform:translateX(-50%);width:14px;height:14px;border-radius:50%;background:#f0b400;border:3px solid #fff;box-shadow:0 0 0 1px var(--tmbc-primary,#0f2a52);pointer-events:none}' +
+      '#' + PANEL_ID + ' [data-tlr]{position:absolute;left:-7px;width:calc(100% + 14px);top:24px;height:22px;margin:0;opacity:0;cursor:ew-resize}' +
       '#' + PANEL_ID + ' .cp-accpj.over{background:#cfe0fa!important;border:2px solid #1b4f9c!important;box-shadow:0 0 0 3px rgba(27,79,156,.25)}#' + PANEL_ID + ' .cp-accpj[data-state=off]{opacity:.45;cursor:not-allowed}#' + PANEL_ID + ' .cp-accpj b{font-family:' + MONO + ';margin-left:4px}' +
       '#' + PANEL_ID + ' [data-dropzone].over{background:#e4ecfa;border-color:#1b4f9c}#' + PANEL_ID + ' tbody tr.dropover td{background:#dbe8fb!important;box-shadow:inset 0 2px 0 #1b4f9c,inset 0 -2px 0 #1b4f9c}' +
       '</style>' +
@@ -1657,6 +1774,7 @@
       '<div style="display:flex;flex-direction:column;gap:3px"><span style="' + lbl + '">Du</span><input data-start type="text" style="' + inp + ';width:104px;font-family:' + MONO + '"></div>' +
       '<div style="display:flex;flex-direction:column;gap:3px"><span style="' + lbl + '">Au</span><input data-end type="text" style="' + inp + ';width:104px;font-family:' + MONO + '"></div>' +
       '</div>' +
+      '<div data-cptl></div>' +
       '<div style="display:flex;align-items:flex-end;gap:20px;flex-wrap:wrap">' +
       '<div style="display:flex;flex-direction:column;gap:3px"><span style="' + lbl + '">Lettrage <b style="font-family:' + MONO + ';background:#e4ecfa;color:#1b4f9c;border-radius:3px;padding:0 4px">F12</b></span>' +
       '<select data-lett style="' + inp + '"><option value="all">Toutes les écritures</option><option value="non">Non lettrées uniquement</option><option value="let">Lettrées uniquement</option></select></div>' +
@@ -1668,15 +1786,14 @@
       '<button data-act="monthly" type="button" style="' + btn + '">Sous-total mensuel</button>' +
       '<button data-act="reset" type="button" style="border:0;background:transparent;color:#1b4f9c;font-size:13px;cursor:pointer;text-decoration:underline;padding:8px 4px">Réinitialiser les filtres</button>' +
       '</div></div>' +
-      // (v2.13) commentaire permanent SOUS le commentaire annuel
-      '<div style="display:flex;flex-direction:column;gap:6px;flex:1 1 320px;min-width:260px;max-width:640px">' +
-      '<div style="display:flex;flex-direction:column;gap:3px"><span style="' + lbl + '">Commentaire annuel (exercice)</span><input data-acoma type="text" autocomplete="off" style="' + inp + ';width:100%;background:#fff"></div>' +
-      '<div style="display:flex;flex-direction:column;gap:3px"><span style="' + lbl + '">Commentaire permanent</span><input data-acomp type="text" autocomplete="off" style="' + inp + ';width:100%;background:#fff"></div></div>' +
-      // (v2.17) pièces jointes : dépôt sur l'écriture sélectionnée + PJ Permanent / PJ DR du compte
-      '<div data-accpj style="display:flex;flex-direction:column;gap:6px;flex:0 0 250px">' +
-      '<div style="display:flex;gap:6px">' +
-      '<button type="button" data-pjk="perm" data-state="off" class="cp-accpj" title="Pièces permanentes du compte" style="' + btn + ';flex:1;padding:6px 8px">PJ Permanent <b>—</b></button>' +
-      '<button type="button" data-pjk="dr" data-state="off" class="cp-accpj" title="Pièces du dossier de révision" style="' + btn + ';flex:1;padding:6px 8px">PJ DR <b>—</b></button></div></div>' +
+      // (v2.20) commentaire permanent puis annuel ; PJ Permanent / PJ DR à droite de chacun
+      '<div style="display:flex;flex-direction:column;gap:6px;flex:1 1 420px;min-width:320px;max-width:820px">' +
+      '<div style="display:flex;flex-direction:column;gap:3px"><span style="' + lbl + '">Commentaire permanent</span><div style="display:flex;gap:8px;align-items:stretch">' +
+      '<input data-acomp type="text" autocomplete="off" style="' + inp + ';flex:1;min-width:0;background:#fff">' +
+      '<button type="button" data-pjk="perm" data-state="off" class="cp-accpj" title="Pièces permanentes du compte" style="' + btn + ';flex:0 0 170px;padding:6px 10px;text-align:left;display:flex;justify-content:space-between;align-items:center">PJ Permanent <b>—</b></button></div></div>' +
+      '<div style="display:flex;flex-direction:column;gap:3px"><span style="' + lbl + '">Commentaire annuel (exercice)</span><div style="display:flex;gap:8px;align-items:stretch">' +
+      '<input data-acoma type="text" autocomplete="off" style="' + inp + ';flex:1;min-width:0;background:#fff">' +
+      '<button type="button" data-pjk="dr" data-state="off" class="cp-accpj" title="Pièces du dossier de révision" style="' + btn + ';flex:0 0 170px;padding:6px 10px;text-align:left;display:flex;justify-content:space-between;align-items:center">PJ DR <b>—</b></button></div></div></div>' +
       '</div>' +
       // soldes
       '<div style="display:flex;gap:12px;padding:10px 20px 8px;flex-wrap:wrap"><div data-bar style="flex:0 1 auto;max-width:100%;box-sizing:border-box;background:var(--tmbc-primary,#0f2a52);color:#fff;border-radius:8px;padding:9px 14px;display:flex;gap:24px;align-items:center;justify-content:space-between;flex-wrap:wrap">' +
@@ -2006,6 +2123,7 @@
     afterPeriodChange();
   }
   async function afterPeriodChange() {
+    renderCpTimeline();
     S.accAll = []; S.accCache = {};
     try { localStorage.setItem('tmbcCpPeriod', S.start + '|' + S.end); } catch (e) { /* ignore */ }
     await loadAllAccounts();
@@ -2359,6 +2477,7 @@
       case 'solde': return '<td class="n' + (l.solde < 0 ? ' neg' : '') + '">' + fmt(l.solde) + '</td>';
       case 'ms': return '<td class="n' + (l.ms < 0 ? ' neg' : '') + '">' + fmt(l.ms) + '</td>';
       case 'cpttc': case 'cpht': case 'cptva': return cpCell(l, k);
+      case 'tva': return '<td class="n" style="color:#3a4a63">' + fmtRate(l.tva) + '</td>';
       case 'piece': return '<td>' + txt(l.piece) + (l.piece2 ? ' / ' + txt(l.piece2) : '') + '</td>';
       case 'pj': return '<td data-pj style="text-align:center;color:#1b4f9c;cursor:pointer" title="' + (l.pj ? 'Survol : aperçu · clic : ouvrir · ' : '') + 'Inser : ajouter une pièce">' + (l.pj ? CLIP : '') + '</td>';
       case 'ech': return '<td class="m" style="color:#5b6b85">' + esc(l.ech ? isoToFr(l.ech) : '') + '</td>';
@@ -2390,7 +2509,7 @@
     const val = {
       date: (l) => l.dateTxt, jnl: (l) => l.jnl, lett: (l) => l.lett, lib: (l) => l.lib,
       deb: (l) => (l.d ? fmt(l.d) : ''), cre: (l) => (l.c ? fmt(l.c) : ''), solde: (l) => fmt(l.solde), ms: (l) => fmt(l.ms),
-      cpttc: (l) => l.cpttc || '', cpht: (l) => l.cpht || '', cptva: (l) => l.cptva || '',
+      cpttc: (l) => l.cpttc || '', cpht: (l) => l.cpht || '', cptva: (l) => l.cptva || '', tva: (l) => fmtRate(l.tva),
       piece: (l) => l.piece + (l.piece2 ? ' / ' + l.piece2 : ''), ech: (l) => (l.ech ? isoToFr(l.ech) : ''), who: (l) => l.who,
     };
     const cls = { date: 'm', lett: 'm', ech: 'm', deb: 'n', cre: 'n', solde: 'n', ms: 'n' };
@@ -2479,11 +2598,11 @@
     aoa.push([{ b: 'Extrait de compte ' + S.acc + (S.accLabel ? ' – ' + S.accLabel : '') }]);
     aoa.push(['Période du ' + isoToFr(S.start) + ' au ' + isoToFr(S.end) + (S.lett === 'non' ? ' · non lettrées' : S.lett === 'let' ? ' · lettrées' : '') + ' · ' + rows.length + ' écriture(s)']);
     aoa.push([]);
-    aoa.push(['Date', 'Journal', 'Lettrage', 'Libellé', 'Débit', 'Crédit', 'Solde', 'Montant signé', 'Pièce', 'Compte TTC', 'Compte HT', 'Compte TVA', 'Échéance', 'Commentaire', 'Saisi par'].map((h) => ({ b: h })));
+    aoa.push(['Date', 'Journal', 'Lettrage', 'Libellé', 'Débit', 'Crédit', 'Solde', 'Montant signé', 'Pièce', 'Compte TTC', 'Compte HT', 'Compte TVA', 'Taux TVA %', 'Échéance', 'Commentaire', 'Saisi par'].map((h) => ({ b: h })));
     let td = 0, tc = 0;
     rows.forEach((l) => {
       td += l.d; tc += l.c;
-      aoa.push([l.dateTxt, l.jnl, l.lett, l.lib, l.d || '', l.c || '', l.solde, l.ms, l.piece + (l.piece2 ? ' / ' + l.piece2 : ''), cpFull(l, 'cpttc'), cpFull(l, 'cpht'), cpFull(l, 'cptva'), l.ech ? isoToFr(l.ech) : '', l.com, l.who]);
+      aoa.push([l.dateTxt, l.jnl, l.lett, l.lib, l.d || '', l.c || '', l.solde, l.ms, l.piece + (l.piece2 ? ' / ' + l.piece2 : ''), cpFull(l, 'cpttc'), cpFull(l, 'cpht'), cpFull(l, 'cptva'), l.tva != null ? { nb: l.tva } : '', l.ech ? isoToFr(l.ech) : '', l.com, l.who]);
     });
     aoa.push([]);
     aoa.push([{ b: 'Totaux' }, '', '', '', { nb: r2(td) }, { nb: r2(tc) }, { nb: r2(td - tc) }]);
@@ -2507,6 +2626,7 @@
     S.monthly = 0; S.accCom = null;
     S.acc = ''; S.accLabel = ''; S.lines = []; S.sel = new Set(); S.accMode = ''; S.accList = null; S.sideAcc = null; S.accIdx = -1;
     showPanel();
+    loadExercisesLabeled().then(renderCpTimeline);
     await loadAllAccounts();
     const firstWith = S.accAll.find((a) => a.lines > 0) || S.accAll[0];
     let first = firstWith && firstWith.num;
