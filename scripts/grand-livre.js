@@ -1,8 +1,12 @@
 // ==UserScript==
 // @name         MyUnisoft - Grand livre à l'écran
 // @namespace    https://nicolas.chassard/myunisoft
-// @version      2.0-ext
-// @description  v2.0 (2026-11-13, demandé par Nicolas) : GRAND LIVRE PREMIUM EN SURIMPRESSION — l'entrée « Grand Livre
+// @version      2.1-ext
+// @description  v2.1 (2026-11-13, retours de Nicolas) : options de gauche à hauteur normale (les styles de l'appli
+//               étiraient les champs : hauteurs forcées) ; bandeau bleu sur sa propre ligne au-dessus du tableau ;
+//               en-tête (Imprimer / Export Excel / ✕), outils et bandeau limités à la largeur du tableau au lieu du
+//               bord droit de l'écran.
+//               v2.0 (2026-11-13, demandé par Nicolas) : GRAND LIVRE PREMIUM EN SURIMPRESSION — l'entrée « Grand Livre
 //               Premium » du menu Tenue ouvre directement une surimpression dans la zone de contenu (même charte et même
 //               placement que Balance / Consultation Premium), sans passer par la page native ni par « Afficher à
 //               l'écran ». Chargement immédiat avec indicateur d'attente : GET /grand_livre (xls=true) avec les
@@ -927,10 +931,18 @@
       '<button type="button" class="glp-load" data-glp="load"' + (GLP.loading ? ' disabled' : '') + '>' + (GLP.loading ? 'Chargement…' : 'Actualiser') + '</button>' +
       '</aside><section class="glp-main">' +
       '<div class="glp-tools"><select data-in="lett" title="Filtre de lettrage (affichage)"><option value="all">Toutes les écritures</option><option value="non">Non lettrées</option><option value="let">Lettrées</option></select>' +
-      '<input type="search" data-in="q" placeholder="Rechercher (compte, libellé, pièce, date, montant…)" value="' + esc(GLP.q) + '">' + bar + '</div>' +
+      '<input type="search" data-in="q" placeholder="Rechercher (compte, libellé, pièce, date, montant…)" value="' + esc(GLP.q) + '"></div>' + bar +
       body + '<div class="glp-hints"><span><b>Clic</b> compte : consultation</span><span><b>Clic</b> journal : ouvre l\'écriture</span><span><b>Clic</b> montant : recherche du montant</span><span><b>Échap</b> fermer</span></div>' +
       '</section></div>';
     root.querySelector('[data-in="lett"]').value = GLP.lettMode;
+    // (v2.1) en-tête (Imprimer / Export Excel / ✕), bandeau et outils limités à la largeur du tableau
+    const tbl = root.querySelector('.glp-table-wrap table');
+    if (tbl) GLP.fitW = tbl.offsetWidth + 2;
+    if (GLP.fitW) {
+      const w = Math.max(GLP.fitW, 760);
+      root.querySelector('.glp-main').style.maxWidth = w + 'px';
+      root.querySelector('.glp-head').style.maxWidth = 20 + 250 + 12 + w + 20 + 'px';
+    }
     const wrap = root.querySelector('.glp-table-wrap');
     if (wrap && keepScroll) { wrap.scrollTop = keepScroll[0]; wrap.scrollLeft = keepScroll[1]; }
   }
@@ -1068,9 +1080,10 @@
     #${GLP_ID} .glp-primary{background:#0f2a52;color:#fff;border-color:#0f2a52;font-weight:600}
     #${GLP_ID} .glp-x{width:36px;padding:8px 0}
     #${GLP_ID} .glp-body{flex:1;display:flex;gap:12px;padding:0 20px 10px;min-height:0}
+    #${GLP_ID} .glp-opts > *{flex:0 0 auto}
     #${GLP_ID} .glp-opts{flex:0 0 250px;background:#fff;border:1px solid #d5dce8;border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;gap:4px;overflow:auto}
     #${GLP_ID} .glp-lbl{font-size:11px;color:#5b6b85;margin-top:6px}
-    #${GLP_ID} .glp-opts input[type=text],#${GLP_ID} .glp-opts input[type=date],#${GLP_ID} .glp-opts select,#${GLP_ID} .glp-tools select,#${GLP_ID} .glp-tools input{border:1px solid #b8c2cf;border-radius:6px;padding:7px 9px;font-size:13px;background:#fff;width:100%}
+    #${GLP_ID} .glp-opts input[type=text],#${GLP_ID} .glp-opts input[type=date],#${GLP_ID} .glp-opts select,#${GLP_ID} .glp-tools select,#${GLP_ID} .glp-tools input{border:1px solid #b8c2cf!important;border-radius:6px!important;padding:6px 9px!important;font-size:13px!important;line-height:20px!important;background:#fff!important;width:100%!important;height:34px!important;min-height:0!important;max-height:34px!important;flex:0 0 auto!important;margin:0!important;box-shadow:none!important}
     #${GLP_ID} .glp-opts input[type=text],#${GLP_ID} .glp-opts input[type=date]{font-family:${MONO}}
     #${GLP_ID} .glp-seg{display:flex;border:1px solid #b8c2cf;border-radius:6px;overflow:hidden}
     #${GLP_ID} .glp-seg button{flex:1;border:0;border-right:1px solid #b8c2cf;background:#fff;color:#0f2a52;padding:7px 4px;font-size:13px;cursor:pointer}
@@ -1083,9 +1096,9 @@
     #${GLP_ID} .glp-load[disabled]{opacity:.6}
     #${GLP_ID} .glp-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:10px;min-height:0}
     #${GLP_ID} .glp-tools{display:flex;gap:10px;align-items:center;flex-wrap:wrap;flex:0 0 auto}
-    #${GLP_ID} .glp-tools select{width:auto}
-    #${GLP_ID} .glp-tools input{width:340px;max-width:100%}
-    #${GLP_ID} .glp-bar{background:#0f2a52;color:#fff;border-radius:8px;padding:9px 16px;display:flex;gap:24px;align-items:center;flex-wrap:wrap;min-height:40px}
+    #${GLP_ID} .glp-tools select{width:auto!important}
+    #${GLP_ID} .glp-tools input{width:360px!important;max-width:100%!important;flex:0 1 360px!important}
+    #${GLP_ID} .glp-bar{align-self:flex-start;flex:0 0 auto;background:#0f2a52;color:#fff;border-radius:8px;padding:9px 16px;display:flex;gap:24px;align-items:center;flex-wrap:wrap;min-height:40px}
     #${GLP_ID} .glp-bar b{font-family:${MONO};font-size:14px}
     #${GLP_ID} .glp-bar b.neg{color:#ffb3b3}
     #${GLP_ID} .glp-table-wrap{flex:1;overflow:auto;background:#fff;border:1px solid #d5dce8;border-radius:8px;min-height:0}

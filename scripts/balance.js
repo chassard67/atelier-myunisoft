@@ -1,8 +1,15 @@
 // ==UserScript==
 // @name         MyUnisoft – Balance : vue 100% personnalisée (v2, API directe)
 // @namespace    https://nicolas.chassard/myunisoft
-// @version      4.1-ext
-// @description  v4.1 (2026-11-13, demandé par Nicolas) : (1) « Montants affichés » remplace la case « Soldes débiteurs /
+// @version      4.2-ext
+// @description  v4.2 (2026-11-13, retours de Nicolas) : (1) Imprimer / Export Excel / ✕ ne sont plus collés au bord droit
+//               de l'écran : l'en-tête et la zone de droite (curseur, bandeau, tableau) s'arrêtent au bord droit du
+//               tableau (recalculé à chaque affichage et après un redimensionnement de colonne) ; (2) « Affichage
+//               trimestriel » (T1…T4 = somme de 3 mois de month_values + Total) et « Affichage trimestriel cumulé »
+//               (cumul depuis le début de l'exercice), mutuellement exclusifs avec les vues mensuelles ; (3) vues
+//               mensuelles / trimestrielles grisées en Clients / Fournisseurs (et en balance âgée) : Balance générale
+//               uniquement.
+//               v4.1 (2026-11-13, demandé par Nicolas) : (1) « Montants affichés » remplace la case « Soldes débiteurs /
 //               créditeurs » : Solde | Solde débiteur / Solde créditeur | Total débits / Total crédits / Solde | Total
 //               débits / Total crédits / Solde débiteur / Solde créditeur (totaux = exercice_mvt de la réponse native,
 //               relevé en direct ; soldes D/C d'un regroupement = somme de ceux de ses comptes) ; colonnes nommées
@@ -407,6 +414,8 @@
     // balance_dynamique/v2 contient déjà month_values sur chaque nœud quel que soit l'état de
     // cette case (confirmé par reniflage réseau : mêmes params envoyés en Mois qu'en Cumul côté
     // natif) — inutile de recharger, comme showDebitCredit/showSubtotals.
+    showQuarterly: false, // (v4.2) "Affichage trimestriel" — trimestres de l'exercice (3 mois de month_values)
+    showQuarterlyCumulative: false, // (v4.2) "Affichage trimestriel cumulé" — cumul depuis le début de l'exercice
     showMonthlyCumulative: false, // "Affichage mensuel cumulé" (2026-08-01) — variante mutuellement
     // exclusive de showMonthly : chaque colonne mois affiche le cumul depuis le début de
     // l'exercice plutôt que le seul mouvement du mois (voir cellValue), et il n'y a pas de
@@ -438,7 +447,7 @@
   const OPTS_KEYS = [
     'subtype', 'filterRange', 'filterRangeUserEdited', 'unbalancedOnly', 'centralizeAccount',
     'unvalidatedOnly', 'showRevisionCols', 'amountMode', 'showSubtotals', 'showClassSubtotals',
-    'showMonthly', 'showMonthlyCumulative', 'compareN1', 'aged', 'agedCompareTo', 'columnWidths',
+    'showMonthly', 'showMonthlyCumulative', 'showQuarterly', 'showQuarterlyCumulative', 'compareN1', 'aged', 'agedCompareTo', 'columnWidths',
   ];
   // Options qui changent la requête serveur : un écart avec ce qui a été
   // reniflé impose un rechargement.
@@ -1649,7 +1658,38 @@
   // toujours, y compris à 0, puisque c'est un vrai agrégat et pas un
   // "absence de mouvement".
   function isMonthColumnId(colId) {
-    return typeof colId === 'string' && colId.indexOf('month_') === 0;
+    return typeof colId === 'string' && (colId.indexOf('month_') === 0 || colId.indexOf('qtr_') === 0);
+  }
+  // (v4.2) Vue périodique active : 'M' mensuel, 'MC' mensuel cumulé, 'Q'
+  // trimestriel, 'QC' trimestriel cumulé, '' aucune. Balance générale
+  // uniquement (options grisées en Clients / Fournisseurs et en balance âgée).
+  function periodicMode() {
+    if (state.subtype !== 0 || state.aged) return '';
+    if (state.showMonthly) return 'M';
+    if (state.showMonthlyCumulative) return 'MC';
+    if (state.showQuarterly) return 'Q';
+    if (state.showQuarterlyCumulative) return 'QC';
+    return '';
+  }
+  const periodicCumulative = () => /C$/.test(periodicMode());
+  // Mois couverts par une colonne : month_i -> [i, i] ; qtr_k -> [3k, 3k+2].
+  function monthRangeFromColId(colId) {
+    if (colId.indexOf('qtr_') === 0) {
+      const k = parseInt(colId.slice(4), 10);
+      return [k * 3, k * 3 + 2];
+    }
+    const i = parseInt(colId.slice(6), 10);
+    return [i, i];
+  }
+  function buildQuarterColumns() {
+    const months = buildMonthColumns();
+    const cols = [];
+    for (let k = 0; k * 3 < months.length; k++) {
+      const a = months[k * 3].label;
+      const b = months[Math.min(months.length - 1, k * 3 + 2)].label;
+      cols.push({ id: 'qtr_' + k, label: 'T' + (k + 1) + ' (' + a + '-' + b + ')', sortable: true, align: 'right', width: '118px' });
+    }
+    return cols;
   }
   function monthIndexFromColId(colId) {
     return parseInt(colId.slice(6), 10);
@@ -1722,11 +1762,20 @@
     // milieu de la vue normale, sur demande explicite (Solde N/N-1, Var %/€,
     // PJ/Com/Valid ne doivent PAS apparaître ici, quel que soit l'état des
     // autres cases).
-    if (state.showMonthly) {
+    const pm = periodicMode();
+    if (pm === 'M') {
       return [...BASE_COLUMNS_START, ...monthColumns()];
     }
-    if (state.showMonthlyCumulative) {
+    if (pm === 'MC') {
       return [...BASE_COLUMNS_START, ...buildMonthColumns()];
+    }
+    if (pm === 'Q') {
+      const q = buildQuarterColumns();
+      if (q.length) q.push({ id: 'monthly_total', label: 'Total', sortable: true, align: 'right', width: '110px' });
+      return [...BASE_COLUMNS_START, ...q];
+    }
+    if (pm === 'QC') {
+      return [...BASE_COLUMNS_START, ...buildQuarterColumns()];
     }
     return [...BASE_COLUMNS_START, ...amountColumns(), ...BASE_COLUMNS_END];
   }
@@ -1881,9 +1930,9 @@
     }
     if (isMonthColumnId(colId)) {
       const arr = node.month_values;
-      const idx = monthIndexFromColId(colId);
+      const [from, idx] = monthRangeFromColId(colId);
       if (!Array.isArray(arr)) return null;
-      if (state.showMonthlyCumulative) {
+      if (periodicCumulative()) {
         // Cumul depuis le premier mois de l'exercice (index 0) jusqu'à ce
         // mois inclus — pas juste le mouvement du mois (voir description
         // v3.32 en tête de fichier).
@@ -1897,7 +1946,15 @@
         }
         return any ? sum : null;
       }
-      return typeof arr[idx] === 'number' ? arr[idx] : null;
+      let sum = 0;
+      let any = false;
+      for (let i = from; i <= idx && i < arr.length; i++) {
+        if (typeof arr[i] === 'number') {
+          sum += arr[i];
+          any = true;
+        }
+      }
+      return any ? sum : null;
     }
     const amc = AMOUNT_COL_RE.exec(colId);
     if (amc) return yearData(node, AMOUNT_YEAR_INDEX[amc[2]])[amc[1]];
@@ -1983,7 +2040,7 @@
       return typeof v === 'number' ? fmtAmount(v) : '';
     }
     if (isMonthColumnId(colId)) {
-      if (state.showMonthlyCumulative) {
+      if (periodicCumulative()) {
         // Un cumul est un vrai solde à ce mois donné, pas une "absence de
         // mouvement" : contrairement au mode mensuel simple, on l'affiche
         // même à 0 (comme monthly_total).
@@ -2316,7 +2373,7 @@
       <div class="tmb-opt-check-group">
         <div class="tmb-opt-check-group-title">Affichage</div>
         <div class="tmb-opt-checks">
-          <label class="${state.showMonthly || state.showMonthlyCumulative ? 'tmb-opt-disabled' : ''}"><input type="checkbox" id="tmb-unbalanced" ${state.unbalancedOnly ? 'checked' : ''} ${state.showMonthly || state.showMonthlyCumulative ? 'disabled' : ''}/> Non soldés uniquement</label>
+          <label class="${periodicMode() ? 'tmb-opt-disabled' : ''}"><input type="checkbox" id="tmb-unbalanced" ${state.unbalancedOnly ? 'checked' : ''} ${periodicMode() ? 'disabled' : ''}/> Non soldés uniquement</label>
           <label><input type="checkbox" id="tmb-compare-n1" ${state.compareN1 ? 'checked' : ''}/> Comparatif N-1 et N-2</label>
           <div class="tmb-opt-amount">
             <span>Montants affichés</span>
@@ -2326,8 +2383,17 @@
           </div>
           <label><input type="checkbox" id="tmb-subtotals" ${state.showSubtotals ? 'checked' : ''}/> Sous-totaux (avec regroupements)</label>
           <label><input type="checkbox" id="tmb-class-subtotals" ${state.showClassSubtotals ? 'checked' : ''}/> Sous-totaux (sans regroupements)</label>
-          <label><input type="checkbox" id="tmb-monthly" ${state.showMonthly ? 'checked' : ''}/> Affichage mensuel</label>
-          <label><input type="checkbox" id="tmb-monthly-cumul" ${state.showMonthlyCumulative ? 'checked' : ''}/> Affichage mensuel cumulé</label>
+          ${[
+            ['tmb-monthly', 'showMonthly', 'Affichage mensuel'],
+            ['tmb-monthly-cumul', 'showMonthlyCumulative', 'Affichage mensuel cumulé'],
+            ['tmb-quarterly', 'showQuarterly', 'Affichage trimestriel'],
+            ['tmb-quarterly-cumul', 'showQuarterlyCumulative', 'Affichage trimestriel cumulé'],
+          ]
+            .map(([id, key, lab]) => {
+              const off = state.subtype !== 0 || state.aged;
+              return `<label class="${off ? 'tmb-opt-disabled' : ''}" ${off ? 'title="Balance générale uniquement"' : ''}><input type="checkbox" id="${id}" data-periodic="${key}" ${state[key] && !off ? 'checked' : ''} ${off ? 'disabled' : ''}/> ${lab}</label>`;
+            })
+            .join('')}
         </div>
       </div>
       <div class="tmb-opt-check-group">
@@ -3173,6 +3239,7 @@
     `;
     attachEvents(root);
     attachOverlayEvents(root);
+    fitOverlayWidth(root);
     if (scroll) {
       const w = root.querySelector('.tmb-table-wrap');
       if (w) {
@@ -3180,6 +3247,25 @@
         w.scrollLeft = scroll[1];
       }
     }
+  }
+
+  // (v4.2) Sur grand écran, la zone de droite (curseur, bandeau, tableau) et
+  // l'en-tête (Imprimer / Export Excel / ✕) s'arrêtent au bord droit du
+  // tableau au lieu de s'étirer jusqu'au bord de l'écran.
+  let lastFitW = 0;
+  function fitOverlayWidth(root) {
+    root = root || document.getElementById('tmb-root');
+    if (!root) return;
+    const main = root.querySelector('.tmb-main');
+    const head = root.querySelector('.tmb-head');
+    const table = root.querySelector('table.tmb-table');
+    if (!main || !head) return;
+    let w = table ? table.offsetWidth + 2 : lastFitW;
+    if (!w) return;
+    lastFitW = w;
+    w = Math.max(w, 760);
+    main.style.maxWidth = w + 'px';
+    head.style.maxWidth = 20 + 250 + 12 + w + 20 + 'px';
   }
 
   function attachOverlayEvents(root) {
@@ -3210,7 +3296,7 @@
         Object.assign(state, {
           unbalancedOnly: true, centralizeAccount: false, unvalidatedOnly: false, showRevisionCols: false,
           amountMode: 'solde', showSubtotals: false, showClassSubtotals: false, showMonthly: false,
-          showMonthlyCumulative: false, compareN1: true, aged: false, columnWidths: {},
+          showMonthlyCumulative: false, showQuarterly: false, showQuarterlyCumulative: false, compareN1: true, aged: false, columnWidths: {},
         });
         loadBalance();
       });
@@ -3433,28 +3519,20 @@
       state.unbalancedOnly = false;
       maybeAutoReload();
     }
-    const monthlyEl = $('#tmb-monthly');
-    if (monthlyEl)
-      monthlyEl.addEventListener('change', () => {
-        state.showMonthly = monthlyEl.checked;
-        if (state.showMonthly) {
-          state.showMonthlyCumulative = false;
-          disableUnbalancedOnlyForMonthly();
-        }
+    // (v4.2) 4 vues périodiques mutuellement exclusives (mensuel, mensuel
+    // cumulé, trimestriel, trimestriel cumulé).
+    const PERIODIC_KEYS = ['showMonthly', 'showMonthlyCumulative', 'showQuarterly', 'showQuarterlyCumulative'];
+    root.querySelectorAll('input[data-periodic]').forEach((el) =>
+      el.addEventListener('change', () => {
+        const key = el.dataset.periodic;
+        PERIODIC_KEYS.forEach((k) => {
+          state[k] = k === key ? el.checked : false;
+        });
+        if (el.checked) disableUnbalancedOnlyForMonthly();
         resetMonthSort();
         renderApp();
-      });
-    const monthlyCumulEl = $('#tmb-monthly-cumul');
-    if (monthlyCumulEl)
-      monthlyCumulEl.addEventListener('change', () => {
-        state.showMonthlyCumulative = monthlyCumulEl.checked;
-        if (state.showMonthlyCumulative) {
-          state.showMonthly = false;
-          disableUnbalancedOnlyForMonthly();
-        }
-        resetMonthSort();
-        renderApp();
-      });
+      })
+    );
 
     const loadBtn = $('#tmb-load');
     if (loadBtn) loadBtn.addEventListener('click', loadBalance);
@@ -3648,6 +3726,7 @@
         function onUp() {
           document.removeEventListener('mousemove', onMove);
           document.removeEventListener('mouseup', onUp);
+          fitOverlayWidth();
         }
         document.addEventListener('mousemove', onMove);
         document.addEventListener('mouseup', onUp);

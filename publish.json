@@ -2,15 +2,13 @@
   "minExtensionVersion": "1.1.0",
   "licenceRequired": true,
   "release": {
-    "version": "1.3.0",
+    "version": "1.3.1",
     "date": "2026-11-13",
     "notes": [
-      "Grand Livre Premium : s'ouvre directement depuis le menu Tenue, par-dessus MyUnisoft (même présentation que Balance et Consultation Premium), avec chargement immédiat et options à gauche (type, plage de comptes, période, exercice, non lettrées, non soldés, tiers centralisés, pièces jointes, commentaires).",
-      "Balance Premium : choix des montants affichés (Solde ; Solde débiteur / créditeur ; Total débits / crédits / Solde ; Total débits / crédits / Soldes débiteur et créditeur).",
-      "Balance Premium : « Comparatif N-1 et N-2 » affiche les deux exercices précédents avec la même présentation que N.",
-      "Balance Premium : curseur « Arrêté au » limité aux mois de l'exercice, plus compact (étiquette 12/2026) ; validations « à faire » / « à valider » correctement affichées comme non validées.",
-      "Consultation Premium : commentaire permanent sous le commentaire annuel, soldes visibles avec les filtres « comptes généraux » et « comptes 6 et 7 », numéros de ligne devant les cases à cocher, boutons alignés sur le tableau.",
-      "Menus Tenue / Révision / Paramètres… : retour à l'affichage MyUnisoft d'origine."
+      "Balance, Grand Livre et Consultation Premium : sur grand écran, Imprimer / Export Excel / ✕ et les bandeaux s'arrêtent au bord du tableau au lieu du bord de l'écran.",
+      "Balance Premium : affichage trimestriel et trimestriel cumulé ; les affichages mensuels et trimestriels sont réservés à la balance générale (grisés en clients / fournisseurs).",
+      "Grand Livre Premium : options de gauche à taille normale, bandeau des totaux au-dessus du tableau.",
+      "Consultation Premium : champs remontés, commentaires annuel et permanent dans une colonne à droite (plus de zone vide)."
     ]
   },
   "defaultMatches": [

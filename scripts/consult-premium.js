@@ -1,8 +1,11 @@
 // ==UserScript==
 // @name         MyUnisoft - Consultation Premium (page de consultation de compte maison)
 // @namespace    https://nicolas.chassard/myunisoft
-// @version      2.13-ext
-// @description  v2.13 (2026-11-13, demandé par Nicolas) : (1) commentaire permanent affiché SOUS le commentaire annuel ;
+// @version      2.14-ext
+// @description  v2.14 (2026-11-13, retour de Nicolas) : bloc de sélection réorganisé — champs (Compte, Filtre, Du/Au ;
+//               Lettrage, montant, recherche…) sur deux lignes à gauche et commentaires annuel / permanent empilés dans
+//               une colonne à droite : plus de zone vide au-dessus des champs.
+//               v2.13 (2026-11-13, demandé par Nicolas) : (1) commentaire permanent affiché SOUS le commentaire annuel ;
 //               (2) liste des comptes : soldes affichés aussi avec « Tous les comptes généraux » et « Comptes 6 et 7 »
 //               (ces filtres reprenaient des comptes sans champ solde) ; (3) numérotation des lignes dans la marge, devant
 //               la case à cocher (plus de colonne « N° » : ni en-tête, ni filtre, ni déplacement ; retirée de l'ordre
@@ -677,6 +680,12 @@
     // (v2.13) Imprimer / Export Excel / ✕ alignés sur le bord droit du tableau (colonne « Saisi par »)
     const head = p.querySelector('[data-head]');
     if (head) head.style.width = (COLS.reduce((x, c) => x + c.w, 0) + 2 + 40) + 'px';
+    // (v2.14) cadre du tableau et bloc de sélection limités à la largeur du tableau (grand écran)
+    const W2 = COLS.reduce((x, c) => x + c.w, 0) + 2;
+    const tw = p.querySelector('[data-twrap]');
+    if (tw) tw.style.maxWidth = W2 + 'px';
+    const sb = p.querySelector('[data-selbox]');
+    if (sb) sb.style.maxWidth = Math.max(W2, 1000) + 'px';
   }
 
   const CLIP = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle" aria-hidden="true"><path d="M21 11l-8.5 8.5a5 5 0 0 1-7-7L14 4a3.5 3.5 0 0 1 5 5l-8.6 8.6a2 2 0 0 1-3-3L15 7"/></svg>';
@@ -1360,7 +1369,10 @@
       '<button data-act="xlsx" type="button" style="' + btn + ';background:#0f2a52;color:#fff;border-color:#0f2a52;font-weight:600">Export Excel</button>' +
       '<button data-act="close" type="button" aria-label="Fermer" style="' + btn + ';width:36px;padding:8px 0">✕</button></div>' +
       // sélection
-      '<div style="margin:0 20px;background:#fff;border:1px solid #d5dce8;border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;gap:12px">' +
+      // (v2.14) champs à gauche sur 2 lignes, commentaires (annuel puis permanent) dans une colonne à droite :
+      // plus d'espace vide au-dessus des champs
+      '<div data-selbox style="margin:0 20px;background:#fff;border:1px solid #d5dce8;border-radius:8px;padding:12px 14px;display:flex;align-items:flex-start;gap:16px;flex-wrap:wrap">' +
+      '<div style="display:flex;flex-direction:column;gap:12px;flex:0 1 auto;min-width:0">' +
       '<div style="display:flex;align-items:flex-end;gap:16px;flex-wrap:wrap">' +
       '<div style="display:flex;flex-direction:column;gap:3px"><span style="' + lbl + '">Compte</span><div style="display:flex;gap:5px;align-items:center">' +
       '<button data-act="back" type="button" title="Compte consulté précédemment (Retour arrière)" style="' + btn + ';padding:7px 10px;opacity:.45" disabled>↶</button>' +
@@ -1371,10 +1383,6 @@
       '<div style="display:flex;flex-direction:column;gap:3px"><span style="' + lbl + '">Filtre de comptes</span><select data-mode style="' + inp + ';width:340px"></select></div>' +
       '<div style="display:flex;flex-direction:column;gap:3px"><span style="' + lbl + '">Du</span><input data-start type="text" style="' + inp + ';width:104px;font-family:' + MONO + '"></div>' +
       '<div style="display:flex;flex-direction:column;gap:3px"><span style="' + lbl + '">Au</span><input data-end type="text" style="' + inp + ';width:104px;font-family:' + MONO + '"></div>' +
-      // (v2.13) commentaire permanent SOUS le commentaire annuel
-      '<div style="display:flex;flex-direction:column;gap:6px;flex:1;min-width:260px;max-width:640px">' +
-      '<div style="display:flex;flex-direction:column;gap:3px"><span style="' + lbl + '">Commentaire annuel (exercice)</span><input data-acoma type="text" autocomplete="off" style="' + inp + ';width:100%;background:#fffbe6"></div>' +
-      '<div style="display:flex;flex-direction:column;gap:3px"><span style="' + lbl + '">Commentaire permanent</span><input data-acomp type="text" autocomplete="off" style="' + inp + ';width:100%;background:#fffbe6"></div></div>' +
       '</div>' +
       '<div style="display:flex;align-items:flex-end;gap:20px;flex-wrap:wrap">' +
       '<div style="display:flex;flex-direction:column;gap:3px"><span style="' + lbl + '">Lettrage <b style="font-family:' + MONO + ';background:#e4ecfa;color:#1b4f9c;border-radius:3px;padding:0 4px">F12</b></span>' +
@@ -1387,12 +1395,17 @@
       '<button data-act="monthly" type="button" style="' + btn + '">Sous-total mensuel</button>' +
       '<button data-act="reset" type="button" style="border:0;background:transparent;color:#1b4f9c;font-size:13px;cursor:pointer;text-decoration:underline;padding:8px 4px">Réinitialiser les filtres</button>' +
       '</div></div>' +
+      // (v2.13) commentaire permanent SOUS le commentaire annuel
+      '<div style="display:flex;flex-direction:column;gap:6px;flex:1 1 320px;min-width:260px;max-width:640px">' +
+      '<div style="display:flex;flex-direction:column;gap:3px"><span style="' + lbl + '">Commentaire annuel (exercice)</span><input data-acoma type="text" autocomplete="off" style="' + inp + ';width:100%;background:#fffbe6"></div>' +
+      '<div style="display:flex;flex-direction:column;gap:3px"><span style="' + lbl + '">Commentaire permanent</span><input data-acomp type="text" autocomplete="off" style="' + inp + ';width:100%;background:#fffbe6"></div></div>' +
+      '</div>' +
       // soldes
       '<div style="display:flex;gap:12px;padding:10px 20px 8px;flex-wrap:wrap"><div data-bar style="flex:0 1 auto;max-width:100%;box-sizing:border-box;background:#0f2a52;color:#fff;border-radius:8px;padding:9px 14px;display:flex;gap:24px;align-items:center;justify-content:space-between;flex-wrap:wrap">' +
       '<div style="font-size:12px;opacity:.9">Affichage : <b data-cnt style="font-weight:600"></b></div>' +
       '<div style="display:flex;gap:22px;font-family:' + MONO + ';font-size:15px"><span style="text-align:right">Débit <b data-td></b></span><span style="text-align:right">Crédit <b data-tc></b></span><span style="text-align:right">Solde <b data-ts></b></span></div></div></div>' +
       // tableau
-      '<div style="flex:1;overflow:auto;margin:0 20px;background:#fff;border:1px solid #d5dce8;border-radius:8px;min-height:0"><table><colgroup>' + HP.cg + '</colgroup><thead><tr>' + HP.h1 + '</tr><tr>' + HP.h2 + '</tr></thead>' +
+      '<div data-twrap style="flex:1;overflow:auto;margin:0 20px;background:#fff;border:1px solid #d5dce8;border-radius:8px;min-height:0"><table><colgroup>' + HP.cg + '</colgroup><thead><tr>' + HP.h1 + '</tr><tr>' + HP.h2 + '</tr></thead>' +
       '<tbody data-body></tbody></table></div>' +
       '<div style="margin:-4px 20px 10px;font-size:12px;color:#5b6b85;display:flex;gap:18px;flex-wrap:wrap"><span><b style="font-family:' + MONO + ';color:#1b4f9c">F12</b> lettrage</span><span><b style="font-family:' + MONO + ';color:#1b4f9c">Double-clic / Entrée</b> ouvre l\'écriture</span><span><b style="font-family:' + MONO + ';color:#1b4f9c">Inser</b> joindre une pièce</span><span><b style="font-family:' + MONO + ';color:#1b4f9c">Espace</b> sélectionner</span><span><b style="font-family:' + MONO + ';color:#1b4f9c">Ctrl+A</b> tout sélectionner</span><span><b style="font-family:' + MONO + ';color:#1b4f9c">Ctrl+←/→</b> compte précédent / suivant</span><span><b style="font-family:' + MONO + ';color:#1b4f9c">Échap</b> fermer</span></div>';
     document.body.appendChild(p);
