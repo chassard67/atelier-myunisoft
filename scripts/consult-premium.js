@@ -1,8 +1,13 @@
 // ==UserScript==
 // @name         MyUnisoft - Consultation Premium (page de consultation de compte maison)
 // @namespace    https://nicolas.chassard/myunisoft
-// @version      2.12-ext
-// @description  v2.12 (2026-11-12, demandé par Nicolas) : (1) retour au compte consulté précédemment : bouton ↶ (à gauche de ◀),
+// @version      2.13-ext
+// @description  v2.13 (2026-11-13, demandé par Nicolas) : (1) commentaire permanent affiché SOUS le commentaire annuel ;
+//               (2) liste des comptes : soldes affichés aussi avec « Tous les comptes généraux » et « Comptes 6 et 7 »
+//               (ces filtres reprenaient des comptes sans champ solde) ; (3) numérotation des lignes dans la marge, devant
+//               la case à cocher (plus de colonne « N° » : ni en-tête, ni filtre, ni déplacement ; retirée de l'ordre
+//               mémorisé) ; (4) Imprimer / Export Excel / ✕ alignés sur le bord droit du tableau (colonne « Saisi par »).
+//               v2.12 (2026-11-12, demandé par Nicolas) : (1) retour au compte consulté précédemment : bouton ↶ (à gauche de ◀),
 //               touche Retour arrière (hors champ de saisie) ou Alt+← ; historique de 50 comptes ; (2) colonne « N° » discrète en tête
 //               (numéro de ligne dans l'ordre affiché, gris, petite police), ajoutée aussi aux ordres de colonnes déjà mémorisés.
 //               v2.11 (2026-11-12, demandé par Nicolas) : colonne Lettrage placée entre Débit et Crédit (ordre par défaut ;
@@ -615,8 +620,8 @@
   // Panneau
   // ------------------------------------------------------------------
   const COLS = [
-    // (v2.12) N° de ligne discret (ordre affiché), toujours en tête après la case.
-    { k: 'chk', w: 34 }, { k: 'no', w: 42, t: 'N°' }, { k: 'date', w: 96, t: 'Date', sort: 'date' }, { k: 'jnl', w: 70, t: 'Journal', sort: 'jnl' },
+    // (v2.13) N° de ligne affiché dans la marge, devant la case à cocher (plus de colonne « N° »).
+    { k: 'chk', w: 64 }, { k: 'date', w: 96, t: 'Date', sort: 'date' }, { k: 'jnl', w: 70, t: 'Journal', sort: 'jnl' },
     { k: 'lib', w: 300, t: 'Libellé', sort: 'lib' },
     // (v2.11) Lettrage entre Débit et Crédit (demande de Nicolas).
     { k: 'deb', w: 112, t: 'Débit', sort: 'd', num: true }, { k: 'lett', w: 78, t: 'Lettrage', sort: 'lett' }, { k: 'cre', w: 112, t: 'Crédit', sort: 'c', num: true },
@@ -629,9 +634,9 @@
     try {
       const o = JSON.parse(localStorage.getItem(COLORD_KEY) || '[]');
       if (!Array.isArray(o) || !o.length) return;
-      // (v2.12) Colonne N° ajoutée en tête si l'ordre mémorisé ne la connaît pas.
-      if (!o.includes('no')) {
-        o.splice(o[0] === 'chk' ? 1 : 0, 0, 'no');
+      // (v2.13) Ancienne colonne « N° » (v2.12) retirée de l'ordre mémorisé.
+      if (o.includes('no')) {
+        o.splice(o.indexOf('no'), 1);
         localStorage.setItem(COLORD_KEY, JSON.stringify(o));
       }
       // (v2.11) Migration unique d'un ordre déjà mémorisé : Lettrage replacé
@@ -657,7 +662,7 @@
   function saveColOrder() { try { localStorage.setItem(COLORD_KEY, JSON.stringify(COLS.map((c) => c.k))); } catch (e) { /* ignore */ } }
   const COLW_KEY = 'tmbcCpColW';
   function loadColW() {
-    try { const o = JSON.parse(localStorage.getItem(COLW_KEY) || '{}'); COLS.forEach((c) => { if (o[c.k] > 24) c.w = o[c.k]; }); } catch (e) { /* ignore */ }
+    try { const o = JSON.parse(localStorage.getItem(COLW_KEY) || '{}'); COLS.forEach((c) => { if (c.k !== 'chk' && o[c.k] > 24) c.w = o[c.k]; }); } catch (e) { /* ignore */ }
   }
   function saveColW() {
     try { const o = {}; COLS.forEach((c) => { o[c.k] = c.w; }); localStorage.setItem(COLW_KEY, JSON.stringify(o)); } catch (e) { /* ignore */ }
@@ -669,6 +674,9 @@
     if (t) t.style.width = COLS.reduce((x, c) => x + c.w, 0) + 'px';
     const bar = p.querySelector('[data-bar]');
     if (bar) bar.style.width = (COLS.reduce((x, c) => x + c.w, 0) + 2) + 'px';
+    // (v2.13) Imprimer / Export Excel / ✕ alignés sur le bord droit du tableau (colonne « Saisi par »)
+    const head = p.querySelector('[data-head]');
+    if (head) head.style.width = (COLS.reduce((x, c) => x + c.w, 0) + 2 + 40) + 'px';
   }
 
   const CLIP = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle" aria-hidden="true"><path d="M21 11l-8.5 8.5a5 5 0 0 1-7-7L14 4a3.5 3.5 0 0 1 5 5l-8.6 8.6a2 2 0 0 1-3-3L15 7"/></svg>';
@@ -1310,8 +1318,8 @@
     const btn = 'border:1px solid #b8c2cf;background:#fff;color:#0f2a52;border-radius:6px;padding:8px 14px;font-size:13px;cursor:pointer';
     const headParts = () => ({
       cg: COLS.map((c) => '<col style="width:' + c.w + 'px">').join(''),
-      h1: COLS.map((c) => c.k === 'chk' ? '<th class="h" style="text-align:center"><input data-all type="checkbox" aria-label="Tout sélectionner"></th>' : '<th class="h' + (c.sort ? ' s' : '') + (c.num ? ' n' : '') + '" data-col="' + c.k + '"' + (c.sort ? ' data-sort="' + c.sort + '"' : '') + '>' + c.t + ' <span data-arrow="' + (c.sort || '') + '"></span><span class="rz" data-rz="' + c.k + '"></span></th>').join(''),
-      h2: COLS.map((c) => (c.k === 'chk' || c.k === 'pj' || c.k === 'no') ? '<th style="background:#fbfcfe;position:sticky;top:34px;z-index:2;border-bottom:1px solid #aebbd0;border-right:1px solid #c3cddd"></th>' : thFilter(c.k)).join(''),
+      h1: COLS.map((c) => c.k === 'chk' ? '<th class="h" style="text-align:right;padding-right:9px"><input data-all type="checkbox" aria-label="Tout sélectionner"></th>' : '<th class="h' + (c.sort ? ' s' : '') + (c.num ? ' n' : '') + '" data-col="' + c.k + '"' + (c.sort ? ' data-sort="' + c.sort + '"' : '') + '>' + c.t + ' <span data-arrow="' + (c.sort || '') + '"></span><span class="rz" data-rz="' + c.k + '"></span></th>').join(''),
+      h2: COLS.map((c) => (c.k === 'chk' || c.k === 'pj') ? '<th style="background:#fbfcfe;position:sticky;top:34px;z-index:2;border-bottom:1px solid #aebbd0;border-right:1px solid #c3cddd"></th>' : thFilter(c.k)).join(''),
     });
     S.rebuildHead = () => {
       const pp = document.getElementById(PANEL_ID);
@@ -1344,7 +1352,7 @@
       '#' + PANEL_ID + ' input:focus,#' + PANEL_ID + ' select:focus{outline:2px solid #6a9be0;outline-offset:0}' +
       '</style>' +
       // en-tête
-      '<div style="display:flex;align-items:center;gap:14px;padding:12px 20px 6px;flex-wrap:wrap">' +
+      '<div data-head style="display:flex;align-items:center;gap:14px;padding:12px 20px 6px;flex-wrap:wrap;box-sizing:border-box;max-width:100%;min-width:min(100%,760px)">' +
       '<b style="font-size:20px;color:#0f2a52;font-weight:600">Consultation Premium</b>' +
       '<span style="background:#0f2a52;color:#fff;font-size:10px;font-weight:700;letter-spacing:.08em;padding:4px 10px;border-radius:999px">PREMIUM</span>' +
       '<span data-info style="color:#5b6b85"></span><div style="flex:1"></div>' +
@@ -1363,8 +1371,10 @@
       '<div style="display:flex;flex-direction:column;gap:3px"><span style="' + lbl + '">Filtre de comptes</span><select data-mode style="' + inp + ';width:340px"></select></div>' +
       '<div style="display:flex;flex-direction:column;gap:3px"><span style="' + lbl + '">Du</span><input data-start type="text" style="' + inp + ';width:104px;font-family:' + MONO + '"></div>' +
       '<div style="display:flex;flex-direction:column;gap:3px"><span style="' + lbl + '">Au</span><input data-end type="text" style="' + inp + ';width:104px;font-family:' + MONO + '"></div>' +
-      '<div style="display:flex;flex-direction:column;gap:3px;flex:1;min-width:200px"><span style="' + lbl + '">Commentaire annuel (exercice)</span><input data-acoma type="text" autocomplete="off" style="' + inp + ';width:100%;background:#fffbe6"></div>' +
-      '<div style="display:flex;flex-direction:column;gap:3px;flex:1;min-width:200px"><span style="' + lbl + '">Commentaire permanent</span><input data-acomp type="text" autocomplete="off" style="' + inp + ';width:100%;background:#fffbe6"></div>' +
+      // (v2.13) commentaire permanent SOUS le commentaire annuel
+      '<div style="display:flex;flex-direction:column;gap:6px;flex:1;min-width:260px;max-width:640px">' +
+      '<div style="display:flex;flex-direction:column;gap:3px"><span style="' + lbl + '">Commentaire annuel (exercice)</span><input data-acoma type="text" autocomplete="off" style="' + inp + ';width:100%;background:#fffbe6"></div>' +
+      '<div style="display:flex;flex-direction:column;gap:3px"><span style="' + lbl + '">Commentaire permanent</span><input data-acomp type="text" autocomplete="off" style="' + inp + ';width:100%;background:#fffbe6"></div></div>' +
       '</div>' +
       '<div style="display:flex;align-items:flex-end;gap:20px;flex-wrap:wrap">' +
       '<div style="display:flex;flex-direction:column;gap:3px"><span style="' + lbl + '">Lettrage <b style="font-family:' + MONO + ';background:#e4ecfa;color:#1b4f9c;border-radius:3px;padding:0 4px">F12</b></span>' +
@@ -1702,7 +1712,9 @@
     if (S.accList) {
       return S.accList.map((num) => {
         const a = S.sideAcc && S.sideAcc[num];
-        return { num, label: (a && a.label) || labelFor(num), solde: a ? a.solde : null };
+        // (v2.13) comptes généraux (« Tous les comptes généraux », « Comptes 6 et 7 ») : entrées
+        // de la liste complète, sans champ solde -> solde lu comme pour « Tous les comptes ».
+        return { num, label: (a && a.label) || labelFor(num), solde: a ? (a.solde != null ? a.solde : guessSolde(a)) : null };
       });
     }
     return S.accAll.map((a) => ({ num: a.num, label: a.label, solde: guessSolde(a), n: a.lines }));
@@ -1987,8 +1999,7 @@
   const txt = (v) => { const t = String(v == null ? '' : v); return esc(t) + (/^[\d\s.,]+$/.test(t.trim()) && t.trim() ? '\u2060' : ''); };
   function cellFor(k, l, on) {
     switch (k) {
-      case 'chk': return '<td style="text-align:center"><input type="checkbox" aria-label="Sélectionner"' + (on ? ' checked' : '') + '></td>';
-      case 'no': return '<td class="m" style="text-align:right;color:#9aa6b8;font-size:11px">' + (l.__no || '') + '</td>';
+      case 'chk': return '<td style="text-align:right;padding:5px 9px 5px 2px"><span class="m" style="color:#9aa6b8;font-size:11px;margin-right:7px;vertical-align:middle">' + (l.__no || '') + '</span><input type="checkbox" aria-label="Sélectionner" style="vertical-align:middle;margin:0"' + (on ? ' checked' : '') + '></td>';
       case 'date': return '<td class="m">' + esc(l.dateTxt) + '</td>';
       case 'jnl': return '<td>' + txt(l.jnl) + '</td>';
       case 'lett': return '<td class="m" style="color:#0f6b4a">' + txt(l.lett) + '</td>';
@@ -2027,7 +2038,7 @@
     let td = 0, tc = 0;
     rows.forEach((l) => { td += l.d; tc += l.c; });
     const val = {
-      no: () => String(rows.length), date: (l) => l.dateTxt, jnl: (l) => l.jnl, lett: (l) => l.lett, lib: (l) => l.lib,
+      date: (l) => l.dateTxt, jnl: (l) => l.jnl, lett: (l) => l.lett, lib: (l) => l.lib,
       deb: (l) => (l.d ? fmt(l.d) : ''), cre: (l) => (l.c ? fmt(l.c) : ''), solde: (l) => fmt(l.solde), ms: (l) => fmt(l.ms),
       cpttc: (l) => l.cpttc || '', cpht: (l) => l.cpht || '', cptva: (l) => l.cptva || '',
       piece: (l) => l.piece + (l.piece2 ? ' / ' + l.piece2 : ''), ech: (l) => (l.ech ? isoToFr(l.ech) : ''), who: (l) => l.who,

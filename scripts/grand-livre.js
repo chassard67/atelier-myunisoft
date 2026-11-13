@@ -1,8 +1,22 @@
 // ==UserScript==
 // @name         MyUnisoft - Grand livre à l'écran
 // @namespace    https://nicolas.chassard/myunisoft
-// @version      1.17-ext
-// @description  v1.17 (2026-11-12, demandé par Nicolas) : nouvelle entrée « Grand Livre Premium » dans le menu Tenue, juste
+// @version      2.0-ext
+// @description  v2.0 (2026-11-13, demandé par Nicolas) : GRAND LIVRE PREMIUM EN SURIMPRESSION — l'entrée « Grand Livre
+//               Premium » du menu Tenue ouvre directement une surimpression dans la zone de contenu (même charte et même
+//               placement que Balance / Consultation Premium), sans passer par la page native ni par « Afficher à
+//               l'écran ». Chargement immédiat avec indicateur d'attente : GET /grand_livre (xls=true) avec les
+//               paramètres relevés sur l'export natif (start_date / end_date ISO, attachment, comment_entry,
+//               comment_account, not_lettered_only, not_solde_only, subtype 0 Général / 1 Clients / 2 Fournisseurs,
+//               centralize_account, account_number = plage telle que saisie, ex. « 401-409, 512 » ; fournisseurs
+//               40-409999 et clients 41-419999 par défaut comme l'appli), classeur lu en mémoire. Options à gauche :
+//               type, plage, Du / Au, exercice (GET /exercices, exercice en cours par défaut), écritures non lettrées,
+//               comptes non soldés, centraliser les tiers, pièces jointes, commentaires de comptes / de lignes
+//               (colonnes « Commentaire » / « Pièce jointe » lues par leur en-tête). Options mémorisées par dossier.
+//               Bandeau de totaux, recherche, filtre lettrées / non lettrées, Export Excel (le classeur reçu),
+//               Imprimer, Échap pour fermer. Plus de bouton « Afficher à l'écran » sur la page Grand livre native
+//               (conservé pour les Journaux). window.TMBC_GL inchangé (Consultation Premium).
+//               v1.17 (2026-11-12, demandé par Nicolas) : nouvelle entrée « Grand Livre Premium » dans le menu Tenue, juste
 //               sous « Grand livre ». « Grand livre » = page native stricte (plus de bouton « Afficher à l'écran ») ;
 //               « Grand Livre Premium » = même page avec le bouton. Mode mémorisé par onglet (sessionStorage
 //               tmbcLedgerMode). Fonctionnalité activable dans l'extension (réglage glPremium) ; le module reste chargé
@@ -239,13 +253,25 @@
     let cur = null;
     let grandTotal = null;
     let lineCount = 0;
+    // (v2.0) en-têtes lus dans la feuille : colonnes optionnelles L « Commentaire »
+    // et M « Pièce jointe » (présentes selon les options de l'édition)
+    const headerMap = {};
+    let comL = '';
     for (const row of rows) {
       const c = row.c;
       if (row.r === 1 && c.A) { title = String(c.A); continue; }
-      if (c.A === 'Compte' && c.B === 'Intitulé compte') continue; // en-tête
+      if (c.A === 'Compte' && c.B === 'Intitulé compte') { // en-tête
+        Object.keys(c).forEach((k) => { headerMap[String(c[k]).trim()] = k; });
+        comL = headerMap['Commentaire'] || '';
+        continue;
+      }
+      if (c.A === undefined && comL && c[comL] !== undefined && c.C === undefined && c.H === undefined && c.I === undefined && c.J === undefined && cur) {
+        cur.comments.push(String(c[comL])); // commentaire de compte sur sa propre ligne
+        continue;
+      }
       if (c.A !== undefined && String(c.A).length) {
         if (!cur || cur.num !== String(c.A)) {
-          cur = { num: String(c.A), label: c.B ? String(c.B) : '', lines: [], total: null };
+          cur = { num: String(c.A), label: c.B ? String(c.B) : '', lines: [], total: null, comments: [] };
           groups.push(cur);
         }
         cur.lines.push(c);
@@ -256,7 +282,7 @@
         grandTotal = c; // total général éventuel
       }
     }
-    return { title, groups, grandTotal, lineCount };
+    return { title, groups, grandTotal, lineCount, headerMap };
   }
 
   const isLettered = (l) => l.G !== undefined && String(l.G).trim() !== '';
@@ -504,7 +530,7 @@
   // --- masquage / retour du grand livre pendant l'usage de la recherche native
   const BACK_ID = 'tmbc-gl-back';
   function hidePanel() {
-    const p = document.getElementById(PANEL_ID);
+    const p = document.getElementById(PANEL_ID) || document.getElementById('tmbc-glp-root');
     if (!p) return;
     p.style.display = 'none';
     if (document.getElementById(BACK_ID)) return;
@@ -514,7 +540,7 @@
     b.textContent = '↩ Grand livre';
     b.style.cssText = 'position:fixed;top:10px;left:50%;transform:translateX(-50%);z-index:2147483600;padding:6px 16px;border:1px solid #0b3d7a;background:#0b3d7a;color:#fff;border-radius:16px;cursor:pointer;font-size:13px;box-shadow:0 2px 8px rgba(0,0,0,.3)';
     b.addEventListener('click', () => {
-      const pp = document.getElementById(PANEL_ID);
+      const pp = document.getElementById(PANEL_ID) || document.getElementById('tmbc-glp-root');
       if (pp) pp.style.display = 'flex';
       b.remove();
     });
@@ -681,6 +707,433 @@
     setTimeout(() => t.remove(), 4000);
   }
 
+
+  // ==================================================================
+  // (v2.0) GRAND LIVRE PREMIUM — surimpression dans la zone de contenu
+  // (même charte et même placement que Balance / Consultation Premium),
+  // ouverte directement depuis le menu Tenue, sans passer par la page
+  // native. Options à gauche, chargement immédiat (GET /grand_livre xls=true,
+  // paramètres relevés sur l'export natif, cf. en-tête), classeur lu en
+  // mémoire. Aucun nœud natif touché.
+  // ==================================================================
+  const GLP_ID = 'tmbc-glp-root';
+  const GLP_OPTS_KEYS = ['subtype', 'range', 'rangeEdited', 'attachment', 'commentAccount', 'commentEntry', 'notLettered', 'notSolde', 'centralize', 'lettMode'];
+  const GLP_DEFAULT_RANGE = { 0: '', 1: '41-419999', 2: '40-409999' };
+  const glSocietyId = () => { const m = /^\/tab\/(\d+)\//.exec(location.pathname); return m && m[1] !== '0' ? m[1] : ''; };
+  const glHeaders = () => { const h = ownHeaders(); const s = glSocietyId(); if (s) h['society-id'] = s; return h; };
+  const GLP = {
+    open: false, subtype: 0, range: '', rangeEdited: false, start: '', end: '', exercises: [],
+    attachment: true, commentAccount: false, commentEntry: false, notLettered: false, notSolde: false, centralize: false,
+    lettMode: 'all', q: '', loading: false, error: '', model: null, buf: null, reqId: 0, soc: '',
+  };
+  function glpOptsKey() { const s = glSocietyId(); return s ? 'tmbcGlpOpts|' + s : ''; }
+  function glpSaveOpts() {
+    const k = glpOptsKey(); if (!k) return;
+    const o = {}; GLP_OPTS_KEYS.forEach((x) => { o[x] = GLP[x]; });
+    try { localStorage.setItem(k, JSON.stringify(o)); } catch (e) { /* ignore */ }
+  }
+  function glpRestoreOpts() {
+    GLP.subtype = 0; GLP.range = ''; GLP.rangeEdited = false; GLP.attachment = true; GLP.commentAccount = false; GLP.commentEntry = false;
+    GLP.notLettered = false; GLP.notSolde = false; GLP.centralize = false; GLP.lettMode = 'all';
+    try { const o = JSON.parse(localStorage.getItem(glpOptsKey()) || 'null'); if (o && typeof o === 'object') GLP_OPTS_KEYS.forEach((x) => { if (x in o) GLP[x] = o[x]; }); } catch (e) { /* ignore */ }
+  }
+  const isoFr = (iso) => (iso ? iso.slice(8, 10) + '/' + iso.slice(5, 7) + '/' + iso.slice(0, 4) : '');
+  async function glpLoadExercises() {
+    try {
+      const r = await fetch('https://prod-ws.myunisoft.fr/exercices?society_id=' + encodeURIComponent(glSocietyId()), { headers: glHeaders(), credentials: 'include', __tmbcOwn: true });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const j = await r.json();
+      return (Array.isArray(j) ? j : [])
+        .filter((e) => e && /^\d{4}-\d{2}-\d{2}/.test(String(e.start_date || '')) && /^\d{4}-\d{2}-\d{2}/.test(String(e.end_date || '')))
+        .map((e) => ({ start: String(e.start_date).slice(0, 10), end: String(e.end_date).slice(0, 10), label: String(e.label || '') }))
+        .sort((a, b) => (a.start < b.start ? -1 : 1));
+    } catch (e) {
+      return [];
+    }
+  }
+  function glpDefaultPeriod() {
+    const today = new Date().toISOString().slice(0, 10);
+    const ex = GLP.exercises;
+    let n = ex.find((e) => e.start <= today && today <= e.end);
+    if (!n && ex.length) { const past = ex.filter((e) => e.start <= today); n = past.length ? past[past.length - 1] : ex[ex.length - 1]; }
+    if (n) return { start: n.start, end: n.end };
+    const y = new Date().getFullYear();
+    return { start: y + '-01-01', end: y + '-12-31' };
+  }
+  function glpParams() {
+    return {
+      start_date: GLP.start, end_date: GLP.end,
+      attachment: String(!!GLP.attachment), comment_entry: String(!!GLP.commentEntry), comment_account: String(!!GLP.commentAccount),
+      not_lettered_only: String(!!GLP.notLettered), not_solde_only: String(!!GLP.notSolde), an_simulation: 'false',
+      subtype: String(GLP.subtype), analytic: 'false', echeance: 'false', exchange_rate: 'false',
+      centralize_account: String(!!GLP.centralize), account_number: GLP.range || '', xls: 'true',
+    };
+  }
+  async function glpLoad() {
+    if (!GLP.start || !GLP.end || GLP.start > GLP.end) { GLP.error = 'Période invalide.'; glpRender(); return; }
+    const id = ++GLP.reqId;
+    GLP.loading = true; GLP.error = '';
+    glpRender();
+    try {
+      const q = new URLSearchParams(glpParams());
+      const r = await fetch('https://prod-ws.myunisoft.fr/grand_livre?' + q.toString(), { headers: glHeaders(), credentials: 'include', __tmbcOwn: true });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const buf = await r.arrayBuffer();
+      if (id !== GLP.reqId) return;
+      const head = new Uint8Array(buf.slice(0, 2));
+      if (!(head[0] === 0x50 && head[1] === 0x4b)) {
+        let msg = 'réponse illisible';
+        try { msg = JSON.parse(new TextDecoder().decode(buf)).message || msg; } catch (e) { /* ignore */ }
+        throw new Error(msg);
+      }
+      const read = await readZipEntries(buf);
+      const shared = parseShared(await read('xl/sharedStrings.xml'));
+      const sheet = await read('xl/worksheets/sheet1.xml');
+      if (!sheet) throw new Error('Feuille introuvable dans le classeur');
+      if (id !== GLP.reqId) return;
+      GLP.model = buildModel(parseSheet(sheet, shared));
+      GLP.buf = buf;
+      panelModelPeriod = { start: GLP.start.replace(/-/g, ''), end: GLP.end.replace(/-/g, '') };
+    } catch (e) {
+      if (id !== GLP.reqId) return;
+      GLP.model = null; GLP.buf = null;
+      GLP.error = 'Grand livre : ' + ((e && e.message) || e);
+    }
+    GLP.loading = false;
+    glpRender();
+  }
+
+  function glpPlace(root) {
+    const sb = window.TMBC.getSidebar && window.TMBC.getSidebar();
+    const sr = sb && sb.getBoundingClientRect();
+    const left = sr && sr.width > 0 ? Math.round(sr.right) : 160;
+    const home = Array.from(document.querySelectorAll('button,a,[role=tab]')).find((e) => {
+      if (!/^Accueil$/.test(e.textContent.trim()) && e.getAttribute('data-id') !== 'tab--2') return false;
+      const r = e.getBoundingClientRect();
+      return r.width > 0 && r.top < 90;
+    });
+    const top = home ? Math.round(home.getBoundingClientRect().bottom + 8) : 58;
+    if (root.style.left !== left + 'px') root.style.left = left + 'px';
+    if (root.style.top !== top + 'px') root.style.top = top + 'px';
+  }
+
+  // Lignes du tableau (mêmes règles que le panneau historique : solde recalculé
+  // en filtre lettré / non lettré, recherche texte, plafond d'affichage).
+  function glpRows(model) {
+    const hm = model.headerMap || {};
+    const comL = hm['Commentaire'];
+    const pjL = hm['Pièce jointe'];
+    const showCom = !!comL && (GLP.commentEntry || GLP.commentAccount);
+    const showPj = !!pjL && GLP.attachment;
+    const ncol = 9 + (showCom ? 1 : 0) + (showPj ? 1 : 0);
+    const mode = GLP.lettMode;
+    const f = (GLP.q || '').toLowerCase();
+    const recalc = mode === 'non' || mode === 'let';
+    const out = [];
+    let shown = 0, accounts = 0, truncated = false, gI = 0, gJ = 0;
+    const extra = (l) => (showCom ? '<td class="com" title="' + esc(l[comL] || '') + '">' + esc(l[comL] || '') + '</td>' : '') +
+      (showPj ? '<td class="pj">' + (l[pjL] ? '<a href="' + esc(String(l[pjL])) + '" target="_blank" rel="noreferrer" title="Ouvrir la pièce jointe">' + PJ_SVG + '</a>' : '') + '</td>' : '');
+    const extraEmpty = (showCom ? '<td></td>' : '') + (showPj ? '<td></td>' : '');
+    for (const g of model.groups) {
+      let base = g.lines;
+      if (mode === 'non') base = base.filter((l) => !isLettered(l));
+      else if (mode === 'let') base = base.filter(isLettered);
+      if (!base.length) continue;
+      let sumI = 0, sumJ = 0;
+      if (recalc) {
+        let run = 0;
+        base = base.map((l) => {
+          const di = typeof l.I === 'number' ? l.I : 0, cj = typeof l.J === 'number' ? l.J : 0;
+          sumI += di; sumJ += cj; run = r2(run + di - cj);
+          return Object.assign({}, l, { K: run });
+        });
+        sumI = r2(sumI); sumJ = r2(sumJ); gI += sumI; gJ += sumJ;
+      }
+      const headTxt = (g.num + ' ' + g.label).toLowerCase();
+      const lines = !f || headTxt.indexOf(f) !== -1 ? base : base.filter((l) => Object.keys(l).some((k) => String(l[k]).toLowerCase().indexOf(f) !== -1));
+      if (!lines.length) continue;
+      accounts++;
+      const accCom = g.comments && g.comments.length ? '<span class="acom">' + esc(g.comments.join(' · ')) + '</span>' : '';
+      out.push('<tr class="acc"><td colspan="' + ncol + '"><span class="lk" data-a="' + esc(g.num) + '" data-act="acc" title="Ouvrir la consultation du compte (Maj+clic : nouvelle fenêtre)"><b>' + esc(g.num) + '</b>&nbsp;&nbsp;' + esc(g.label) + '</span>' + accCom + '</td></tr>');
+      for (const l of lines) {
+        if (shown >= MAX_ROWS) { truncated = true; break; }
+        shown++;
+        const amt = typeof l.I === 'number' && l.I !== 0 ? l.I : typeof l.J === 'number' ? l.J : 0;
+        out.push('<tr class="ln" data-a="' + esc(g.num) + '" data-d="' + esc(l.C || '') + '" data-j="' + esc(l.D || '') + '" data-m="' + amt + '"><td class="m">' + esc(l.C || '') +
+          '</td><td class="lk" data-act="ent" title="Ouvrir l\'écriture dans la saisie">' + esc(l.D || '') + '</td><td>' + esc(l.E || '') + '</td><td>' + esc(l.F || '') +
+          '</td><td class="m lett">' + esc(l.G || '') + '</td><td class="lib" title="' + esc(l.H || '') + '">' + esc(l.H || '') + '</td>' + numCell(l.I) + numCell(l.J) + numCell(l.K) + extra(l) + '</tr>');
+      }
+      if (!f) {
+        if (recalc) out.push('<tr class="tot"><td colspan="6">Solde du compte ' + esc(g.num) + (mode === 'non' ? ' (non lettré)' : ' (lettré)') + '</td>' + numCell(sumI) + numCell(sumJ) + numCell(r2(sumI - sumJ)) + extraEmpty + '</tr>');
+        else if (g.total) out.push('<tr class="tot"><td colspan="6">Solde du compte ' + esc(g.num) + '</td>' + numCell(g.total.I) + numCell(g.total.J) + numCell(typeof g.total.I === 'number' || typeof g.total.J === 'number' ? r2((g.total.I || 0) - (g.total.J || 0)) : undefined) + extraEmpty + '</tr>');
+      }
+      if (truncated) break;
+    }
+    let tot = null;
+    if (!f && !truncated) {
+      if (recalc) tot = { label: 'Total général (' + (mode === 'non' ? 'non lettré' : 'lettré') + ')', I: r2(gI), J: r2(gJ) };
+      else if (model.grandTotal) tot = { label: model.grandTotal.H || 'Total', I: model.grandTotal.I || 0, J: model.grandTotal.J || 0 };
+      if (tot) out.push('<tr class="tot gt"><td colspan="6">' + esc(tot.label) + '</td>' + numCell(tot.I) + numCell(tot.J) + numCell(r2(tot.I - tot.J)) + extraEmpty + '</tr>');
+    }
+    if (truncated) out.push('<tr class="tot"><td colspan="' + ncol + '">Affichage limité à ' + MAX_ROWS + ' lignes — affinez la plage de comptes ou la recherche.</td></tr>');
+    return { html: out.join(''), shown, accounts, showCom, showPj, tot };
+  }
+  const PJ_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true" style="vertical-align:-2px"><path d="M21 12l-8.5 8.5a5 5 0 0 1-7-7L14 5a3.5 3.5 0 0 1 5 5l-8.5 8.5a2 2 0 0 1-3-3L15 8"/></svg>';
+
+  function glpInfo() {
+    const tab = document.querySelector('.navBar button[data-id="tab-' + glSocietyId() + '"]');
+    const soc = tab ? tab.textContent.trim() : '';
+    const type = ['Général', 'Clients', 'Fournisseurs'][GLP.subtype] || '';
+    return [soc, 'Grand livre ' + type.toLowerCase(), GLP.start && GLP.end ? 'du ' + isoFr(GLP.start) + ' au ' + isoFr(GLP.end) : '', GLP.range ? 'comptes ' + GLP.range : ''].filter(Boolean).join(' · ');
+  }
+
+  function glpRender() {
+    const root = document.getElementById(GLP_ID);
+    if (!root) return;
+    const scrollEl = root.querySelector('.glp-table-wrap');
+    const keepScroll = scrollEl ? [scrollEl.scrollTop, scrollEl.scrollLeft] : null;
+    const exOpts = GLP.exercises.map((e, i) => '<option value="' + i + '"' + (e.start === GLP.start && e.end === GLP.end ? ' selected' : '') + '>' + isoFr(e.start) + ' au ' + isoFr(e.end) + (e.label ? ' (' + esc(e.label) + ')' : '') + '</option>').join('');
+    const exSel = GLP.exercises.some((e) => e.start === GLP.start && e.end === GLP.end);
+    const chk = (id, on, label) => '<label><input type="checkbox" data-opt="' + id + '"' + (on ? ' checked' : '') + '> ' + label + '</label>';
+    let body = '';
+    let bar = '';
+    if (GLP.loading) {
+      body = '<div class="glp-state"><span class="glp-spin"></span>Chargement du grand livre…</div>';
+    } else if (GLP.error) {
+      body = '<div class="glp-state glp-err">' + esc(GLP.error) + '</div>';
+    } else if (GLP.model && !GLP.model.groups.length) {
+      body = '<div class="glp-state">Aucune écriture pour ces critères.</div>';
+    } else if (GLP.model) {
+      const r = glpRows(GLP.model);
+      const neg = (v) => '<b class="' + (v < 0 ? 'neg' : '') + '">' + fmtNum(v) + '</b>';
+      bar = '<div class="glp-bar"><span>Affichage : <b>' + r.accounts + ' compte' + (r.accounts > 1 ? 's' : '') + '</b> · <b>' + r.shown + ' ligne' + (r.shown > 1 ? 's' : '') + '</b></span>' +
+        (r.tot ? '<span>Débit ' + neg(r.tot.I) + '</span><span>Crédit ' + neg(r.tot.J) + '</span><span>Solde ' + neg(r2(r.tot.I - r.tot.J)) + '</span>' : '') + '</div>';
+      const cols = '<col style="width:92px"><col style="width:64px"><col style="width:112px"><col style="width:96px"><col style="width:70px"><col style="width:320px"><col style="width:124px"><col style="width:124px"><col style="width:128px">' + (r.showCom ? '<col style="width:230px">' : '') + (r.showPj ? '<col style="width:44px">' : '');
+      const W = 92 + 64 + 112 + 96 + 70 + 320 + 124 * 2 + 128 + (r.showCom ? 230 : 0) + (r.showPj ? 44 : 0);
+      body = '<div class="glp-table-wrap"><table style="width:' + W + 'px"><colgroup>' + cols + '</colgroup><thead><tr><th>Date</th><th>Journal</th><th>Pièce</th><th>Pièce 2</th><th>Lettrage</th><th>Intitulé</th><th class="n">Débit</th><th class="n">Crédit</th><th class="n">Solde</th>' +
+        (r.showCom ? '<th>Commentaire</th>' : '') + (r.showPj ? '<th style="text-align:center!important">PJ</th>' : '') + '</tr></thead><tbody>' + r.html + '</tbody></table></div>';
+    }
+    root.innerHTML =
+      '<div class="glp-head"><span class="glp-title">Grand Livre Premium</span><span class="glp-pill">PREMIUM</span><span class="glp-info">' + esc(glpInfo()) + '</span><div style="flex:1"></div>' +
+      '<button type="button" class="glp-btn" data-glp="print">Imprimer</button><button type="button" class="glp-btn glp-primary" data-glp="xlsx"' + (GLP.buf ? '' : ' disabled') + '>Export Excel</button><button type="button" class="glp-btn glp-x" data-glp="close" aria-label="Fermer">✕</button></div>' +
+      '<div class="glp-body"><aside class="glp-opts">' +
+      '<div class="glp-lbl">Grand livre</div><div class="glp-seg">' + ['Général', 'Clients', 'Fourn.'].map((t, i) => '<button type="button" data-sub="' + i + '" class="' + (GLP.subtype === i ? 'on' : '') + '">' + t + '</button>').join('') + '</div>' +
+      '<div class="glp-lbl">Comptes (plage)</div><input type="text" data-in="range" value="' + esc(GLP.range) + '" placeholder="ex. 1-3, 5, 6-7" title="Laisser vide pour tous les comptes ; Entrée pour appliquer">' +
+      '<div class="glp-lbl">Du</div><input type="date" data-in="start" value="' + GLP.start + '">' +
+      '<div class="glp-lbl">Au</div><input type="date" data-in="end" value="' + GLP.end + '">' +
+      (GLP.exercises.length ? '<div class="glp-lbl">Exercice</div><select data-in="ex">' + (exSel ? '' : '<option value="-1" selected>— personnalisé —</option>') + exOpts + '</select>' : '') +
+      '<div class="glp-grp">Écritures</div>' + chk('notLettered', GLP.notLettered, 'Écritures non lettrées uniquement') + chk('notSolde', GLP.notSolde, 'Comptes non soldés uniquement') + chk('centralize', GLP.centralize, 'Centraliser les comptes de tiers') +
+      '<div class="glp-grp">Compléments</div>' + chk('attachment', GLP.attachment, 'Pièces jointes') + chk('commentAccount', GLP.commentAccount, 'Commentaires sur les comptes') + chk('commentEntry', GLP.commentEntry, 'Commentaires sur les lignes') +
+      '<button type="button" class="glp-load" data-glp="load"' + (GLP.loading ? ' disabled' : '') + '>' + (GLP.loading ? 'Chargement…' : 'Actualiser') + '</button>' +
+      '</aside><section class="glp-main">' +
+      '<div class="glp-tools"><select data-in="lett" title="Filtre de lettrage (affichage)"><option value="all">Toutes les écritures</option><option value="non">Non lettrées</option><option value="let">Lettrées</option></select>' +
+      '<input type="search" data-in="q" placeholder="Rechercher (compte, libellé, pièce, date, montant…)" value="' + esc(GLP.q) + '">' + bar + '</div>' +
+      body + '<div class="glp-hints"><span><b>Clic</b> compte : consultation</span><span><b>Clic</b> journal : ouvre l\'écriture</span><span><b>Clic</b> montant : recherche du montant</span><span><b>Échap</b> fermer</span></div>' +
+      '</section></div>';
+    root.querySelector('[data-in="lett"]').value = GLP.lettMode;
+    const wrap = root.querySelector('.glp-table-wrap');
+    if (wrap && keepScroll) { wrap.scrollTop = keepScroll[0]; wrap.scrollLeft = keepScroll[1]; }
+  }
+
+  function glpDownload() {
+    if (!GLP.buf) return;
+    const blob = new Blob([GLP.buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'Grand livre ' + (glpInfo().split(' · ')[0] || '') + ' ' + GLP.start + ' ' + GLP.end + '.xlsx';
+    document.body.appendChild(a);
+    AClick.call(a);
+    setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 2000);
+  }
+
+  function glpOnClick(ev) {
+    const b = ev.target.closest('[data-glp],[data-sub]');
+    if (b) {
+      if (b.dataset.sub !== undefined) {
+        const st = Number(b.dataset.sub);
+        if (st !== GLP.subtype) {
+          GLP.subtype = st;
+          if (!GLP.rangeEdited) GLP.range = GLP_DEFAULT_RANGE[st] || '';
+          glpSaveOpts(); glpLoad();
+        }
+        return;
+      }
+      const act = b.dataset.glp;
+      if (act === 'close') glpClose();
+      else if (act === 'print') window.print();
+      else if (act === 'xlsx') glpDownload();
+      else if (act === 'load') glpLoad();
+      return;
+    }
+    if (ev.target.closest('a[href]')) return;
+    onPanelClick(ev);
+  }
+  function glpOnChange(ev) {
+    const t = ev.target;
+    if (t.dataset.opt) { GLP[t.dataset.opt] = t.checked; glpSaveOpts(); glpLoad(); return; }
+    const k = t.dataset.in;
+    if (k === 'lett') { GLP.lettMode = t.value; glpSaveOpts(); glpRender(); }
+    else if (k === 'start' || k === 'end') { if (t.value) { GLP[k] = t.value; glpLoad(); } }
+    else if (k === 'ex') { const e = GLP.exercises[Number(t.value)]; if (e) { GLP.start = e.start; GLP.end = e.end; glpLoad(); } }
+    else if (k === 'range') { const v = t.value.trim(); if (v !== GLP.range) { GLP.range = v; GLP.rangeEdited = true; glpSaveOpts(); glpLoad(); } }
+  }
+  let glpQTimer = null;
+  function glpOnInput(ev) {
+    const t = ev.target;
+    if (t.dataset.in !== 'q') return;
+    clearTimeout(glpQTimer);
+    glpQTimer = setTimeout(() => {
+      GLP.q = t.value.trim();
+      glpRender();
+      const q = document.querySelector('#' + GLP_ID + ' [data-in="q"]');
+      if (q) { q.focus(); q.setSelectionRange(q.value.length, q.value.length); }
+    }, 250);
+  }
+  function glpOnKey(ev) {
+    if (!GLP.open) return;
+    if (ev.key === 'Enter' && ev.target && ev.target.dataset && ev.target.dataset.in === 'range') { ev.target.blur(); return; }
+    if (ev.key !== 'Escape') return;
+    const root = document.getElementById(GLP_ID);
+    if (!root || root.style.display === 'none') return;
+    if (document.querySelector('.MuiPopover-root,.MuiMenu-root,[role=dialog]')) return;
+    ev.stopPropagation();
+    glpClose();
+  }
+
+  function glpClose() {
+    GLP.open = false;
+    GLP.reqId++;
+    const r = document.getElementById(GLP_ID);
+    if (r) r.remove();
+    const bk = document.getElementById(BACK_ID);
+    if (bk) bk.remove();
+  }
+
+  function glpCloseNativeMenu() {
+    const dlg = document.querySelector('.MuiDialog-root:has(.dialogContainer__menu)');
+    if (!dlg) return;
+    dlg.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', keyCode: 27, bubbles: true, cancelable: true }));
+    setTimeout(() => {
+      const d2 = document.querySelector('.MuiDialog-root:has(.dialogContainer__menu)');
+      if (d2) {
+        const x = d2.querySelector('.dialogContainer__header button') || Array.from(d2.querySelectorAll('button')).find((b) => !b.textContent.trim());
+        if (x) x.click();
+      }
+    }, 120);
+  }
+
+  async function glpOpen() {
+    glpCloseNativeMenu();
+    const soc = glSocietyId();
+    if (!soc) { toast('Ouvre d\'abord un dossier.'); return; }
+    if (soc !== GLP.soc) { GLP.soc = soc; GLP.exercises = []; GLP.model = null; GLP.buf = null; GLP.start = ''; GLP.end = ''; GLP.q = ''; }
+    glpRestoreOpts();
+    let root = document.getElementById(GLP_ID);
+    if (!root) {
+      root = document.createElement('div');
+      root.id = GLP_ID;
+      root.addEventListener('click', glpOnClick);
+      root.addEventListener('change', glpOnChange);
+      root.addEventListener('input', glpOnInput);
+      document.body.appendChild(root);
+    }
+    root.style.display = 'flex';
+    GLP.open = true;
+    glpPlace(root);
+    GLP.loading = true; GLP.error = '';
+    glpRender();
+    if (!GLP.exercises.length) GLP.exercises = await glpLoadExercises();
+    if (!GLP.open) return;
+    if (!GLP.start) { const p = glpDefaultPeriod(); GLP.start = p.start; GLP.end = p.end; }
+    glpLoad();
+  }
+
+  // repositionnement / fermeture si le dossier change
+  function scanGlpOverlay() {
+    const root = document.getElementById(GLP_ID);
+    if (!root) return;
+    if (!GLP.open || glSocietyId() !== GLP.soc) { glpClose(); return; }
+    glpPlace(root);
+  }
+
+  const GLP_CSS = `
+    #${GLP_ID}{position:fixed;left:160px;top:58px;right:0;bottom:0;z-index:1195;background:#eef1f6;display:flex;flex-direction:column;font-family:"Segoe UI",system-ui,sans-serif;font-size:13px;color:#1c2b44;min-width:0;overflow:hidden}
+    #${GLP_ID} *{box-sizing:border-box}
+    #${GLP_ID} .glp-head{display:flex;align-items:center;gap:14px;padding:12px 20px 8px;flex-wrap:wrap;flex:0 0 auto}
+    #${GLP_ID} .glp-title{font-size:20px;color:#0f2a52;font-weight:600;white-space:nowrap}
+    #${GLP_ID} .glp-pill{background:#0f2a52;color:#fff;font-size:10px;font-weight:700;letter-spacing:.08em;padding:4px 10px;border-radius:999px}
+    #${GLP_ID} .glp-info{color:#5b6b85}
+    #${GLP_ID} .glp-btn{border:1px solid #b8c2cf;background:#fff;color:#0f2a52;border-radius:6px;padding:8px 14px;font-size:13px;cursor:pointer}
+    #${GLP_ID} .glp-btn[disabled]{opacity:.5;cursor:default}
+    #${GLP_ID} .glp-primary{background:#0f2a52;color:#fff;border-color:#0f2a52;font-weight:600}
+    #${GLP_ID} .glp-x{width:36px;padding:8px 0}
+    #${GLP_ID} .glp-body{flex:1;display:flex;gap:12px;padding:0 20px 10px;min-height:0}
+    #${GLP_ID} .glp-opts{flex:0 0 250px;background:#fff;border:1px solid #d5dce8;border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;gap:4px;overflow:auto}
+    #${GLP_ID} .glp-lbl{font-size:11px;color:#5b6b85;margin-top:6px}
+    #${GLP_ID} .glp-opts input[type=text],#${GLP_ID} .glp-opts input[type=date],#${GLP_ID} .glp-opts select,#${GLP_ID} .glp-tools select,#${GLP_ID} .glp-tools input{border:1px solid #b8c2cf;border-radius:6px;padding:7px 9px;font-size:13px;background:#fff;width:100%}
+    #${GLP_ID} .glp-opts input[type=text],#${GLP_ID} .glp-opts input[type=date]{font-family:${MONO}}
+    #${GLP_ID} .glp-seg{display:flex;border:1px solid #b8c2cf;border-radius:6px;overflow:hidden}
+    #${GLP_ID} .glp-seg button{flex:1;border:0;border-right:1px solid #b8c2cf;background:#fff;color:#0f2a52;padding:7px 4px;font-size:13px;cursor:pointer}
+    #${GLP_ID} .glp-seg button:last-child{border-right:0}
+    #${GLP_ID} .glp-seg button.on{background:#0f2a52;color:#fff;font-weight:600}
+    #${GLP_ID} .glp-grp{font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#0f2a52;margin:14px 0 4px;padding-bottom:4px;border-bottom:1px solid #e3e8f0}
+    #${GLP_ID} .glp-opts label{display:flex;align-items:flex-start;gap:7px;font-size:13px;line-height:1.3;cursor:pointer;margin:2px 0}
+    #${GLP_ID} .glp-opts label input{margin:2px 0 0;accent-color:#0f2a52}
+    #${GLP_ID} .glp-load{margin-top:16px;border:0;border-radius:6px;background:#0f2a52;color:#fff;font-weight:600;padding:9px;cursor:pointer}
+    #${GLP_ID} .glp-load[disabled]{opacity:.6}
+    #${GLP_ID} .glp-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:10px;min-height:0}
+    #${GLP_ID} .glp-tools{display:flex;gap:10px;align-items:center;flex-wrap:wrap;flex:0 0 auto}
+    #${GLP_ID} .glp-tools select{width:auto}
+    #${GLP_ID} .glp-tools input{width:340px;max-width:100%}
+    #${GLP_ID} .glp-bar{background:#0f2a52;color:#fff;border-radius:8px;padding:9px 16px;display:flex;gap:24px;align-items:center;flex-wrap:wrap;min-height:40px}
+    #${GLP_ID} .glp-bar b{font-family:${MONO};font-size:14px}
+    #${GLP_ID} .glp-bar b.neg{color:#ffb3b3}
+    #${GLP_ID} .glp-table-wrap{flex:1;overflow:auto;background:#fff;border:1px solid #d5dce8;border-radius:8px;min-height:0}
+    #${GLP_ID} table{border-collapse:separate;border-spacing:0;table-layout:fixed;font-size:12.5px}
+    #${GLP_ID} th{position:sticky;top:0;z-index:2;background:#f3f6fb;color:#0f2a52;font-weight:600;font-size:12px;height:34px;padding:0 8px;text-align:left!important;border-bottom:1px solid #aebbd0;border-right:1px solid #c3cddd;white-space:nowrap}
+    #${GLP_ID} th.n{text-align:right!important}
+    #${GLP_ID} td{padding:4px 8px;border-bottom:1px solid #dde3ec;border-right:1px solid #e3e8f0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:left!important}
+    #${GLP_ID} td.n{text-align:right!important;font-family:${MONO}}
+    #${GLP_ID} td.m{font-family:${MONO}}
+    #${GLP_ID} td.lett{color:#0f6b4a}
+    #${GLP_ID} td.neg{color:#c62828}
+    #${GLP_ID} td.com{color:#3a4a63}
+    #${GLP_ID} td.pj{text-align:center!important}
+    #${GLP_ID} td.pj a{color:#1b4f9c}
+    #${GLP_ID} tr.acc td{background:#e8eef8;color:#0f2a52;padding:7px 8px;border-top:1px solid #aebbd0;position:sticky;top:34px;z-index:1}
+    #${GLP_ID} tr.acc b{font-family:${MONO}}
+    #${GLP_ID} tr.acc .acom{margin-left:18px;color:#7a5a00;background:#fffbe6;border-radius:4px;padding:1px 6px;font-size:12px}
+    #${GLP_ID} tr.ln:nth-child(even) td{background:#f8fafd}
+    #${GLP_ID} tr.ln:hover td{background:#eaf1fc}
+    #${GLP_ID} tr.tot td{background:#f3f6fb;font-weight:700;color:#0f2a52;border-top:1px solid #aebbd0}
+    #${GLP_ID} tr.gt td{background:#b4c6e7;border-top:2px solid #0f2a52}
+    #${GLP_ID} .lk{cursor:pointer}
+    #${GLP_ID} .lk:hover{text-decoration:underline;color:#1b4f9c}
+    #${GLP_ID} .glp-state{flex:1;display:flex;align-items:center;justify-content:center;gap:12px;background:#fff;border:1px solid #d5dce8;border-radius:8px;color:#5b6b85;font-size:14px}
+    #${GLP_ID} .glp-err{color:#c62828;white-space:pre-wrap;padding:20px}
+    #${GLP_ID} .glp-spin{width:22px;height:22px;border:3px solid #d5dce8;border-top-color:#0f2a52;border-radius:50%;animation:glpspin .8s linear infinite}
+    @keyframes glpspin{to{transform:rotate(360deg)}}
+    #${GLP_ID} .glp-hints{font-size:12px;color:#5b6b85;display:flex;gap:18px;flex-wrap:wrap;flex:0 0 auto}
+    #${GLP_ID} .glp-hints b{font-family:${MONO};color:#1b4f9c}
+    @media print{
+      body > *:not(#${GLP_ID}){display:none!important}
+      #${GLP_ID}{position:static!important;overflow:visible!important;background:#fff}
+      #${GLP_ID} .glp-opts,#${GLP_ID} .glp-btn,#${GLP_ID} .glp-tools select,#${GLP_ID} .glp-tools input,#${GLP_ID} .glp-hints{display:none!important}
+      #${GLP_ID} .glp-body,#${GLP_ID} .glp-main,#${GLP_ID} .glp-table-wrap{display:block!important;overflow:visible!important;border:0}
+      #${GLP_ID} th,#${GLP_ID} tr.acc td{position:static}
+    }`;
+  (function injectGlpCss() {
+    const add = () => {
+      if (document.getElementById(GLP_ID + '-css')) return;
+      const st = document.createElement('style');
+      st.id = GLP_ID + '-css';
+      st.textContent = GLP_CSS;
+      (document.head || document.documentElement).appendChild(st);
+    };
+    if (document.head) add(); else document.addEventListener('DOMContentLoaded', add);
+  })();
+  document.addEventListener('keydown', glpOnKey, true);
+
   // ------------------------------------------------------------------
   // Déroulé : clic sur "Afficher à l'écran"
   // ------------------------------------------------------------------
@@ -801,9 +1254,11 @@
   }
   // Bouton « Afficher à l'écran » autorisé ici ? (Grand livre : seulement en
   // mode Premium ; Journaux : dès que la fonctionnalité est active.)
+  // (v2.0) Grand livre : plus de bouton sur la page native (Grand Livre Premium
+  // = surimpression) ; Journaux : bouton conservé.
   function premiumButtonsAllowed() {
     if (isDisabled() || !glFeatureOn()) return false;
-    if (LEDGER_PATH_RE.test(location.pathname)) return ledgerPremiumMode();
+    if (LEDGER_PATH_RE.test(location.pathname)) return false;
     return true;
   }
 
@@ -818,14 +1273,9 @@
       onNativeClick: () => {
         if (!programmaticLedgerClick) writeLedgerMode(false);
       },
-      onClick: (nativeLi) => {
-        writeLedgerMode(true);
-        programmaticLedgerClick = true;
-        try {
-          nativeLi.click(); // navigation native (ou simple fermeture du menu si déjà sur la page)
-        } finally {
-          programmaticLedgerClick = false;
-        }
+      // (v2.0) ouvre directement la surimpression, sans passer par la page native
+      onClick: () => {
+        glpOpen();
       },
     });
   }
@@ -909,7 +1359,7 @@
 
   function scanPageButton() {
     let btn = document.getElementById(PAGE_BTN_ID);
-    const onLedger = premiumButtonsAllowed() && /\/current-editions\/(ledger|currentEditionDiary)/.test(location.pathname);
+    const onLedger = premiumButtonsAllowed() && /\/current-editions\/currentEditionDiary/.test(location.pathname);
     const popupOpen = !!document.querySelector('.MuiPopover-root,.MuiMenu-root,.MuiModal-root,[role=dialog]');
     if (!onLedger) { if (btn) btn.remove(); return; }
     const kebab = findKebabButton();
@@ -1049,6 +1499,7 @@
   };
 
   registerScan(scanLedgerMenu);
+  registerScan(scanGlpOverlay);
   registerScan(scanGrandLivre);
   registerScan(scanPageButton);
 })();

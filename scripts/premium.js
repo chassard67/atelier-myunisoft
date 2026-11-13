@@ -1,8 +1,12 @@
 // ==UserScript==
 // @name         MyUnisoft - Premium (core)
 // @namespace    https://nicolas.chassard/myunisoft
-// @version      4.14-ext
-// @description  v4.14 (2026-11-12, demandes de Nicolas) : (1) bouton PREMIUM de la barre du haut supprimé (activation
+// @version      4.15-ext
+// @description  v4.15 (2026-11-13, demandé par Nicolas) : panneau compact des méga-menus (Tenue, Révision,
+//               Déclarations, Paramètres… resserrés et collés à la barre bleue, ajouté le 2026-10-22) supprimé :
+//               les menus retrouvent leur affichage MyUnisoft natif. L'aligneur de cellules ignore aussi la
+//               surimpression Grand Livre Premium (#tmbc-glp-root), qui gère ses propres alignements.
+//               v4.14 (2026-11-12, demandes de Nicolas) : (1) bouton PREMIUM de la barre du haut supprimé (activation
 //               fonctionnalité par fonctionnalité dans l'extension) et ancien drapeau tmbc-scripts-disabled effacé ;
 //               (2) réglages de l'extension lus via feature() : lignes de séparation des tableaux (gridLines), chiffres
 //               en Consolas (monoFont), statut MyUnisoft/météo (showStatus, désactivé par défaut) ; (3) nouvel utilitaire
@@ -726,20 +730,7 @@
            (même rendu que le mode "pleine largeur", qui fonctionnait). */
         /* tmbc 2026-10-22 : méga-menus en haut */
   .MuiDialog-paperFullScreen .dialogContainer{justify-content:flex-start!important}
-  /* tmbc 2026-10-22 : méga-menus (Déclarations, Paramètres...) en panneau COMPACT collé
-     à la barre bleue, façon menu Windows : plus de pleine largeur, colonnes serrées. */
-  .MuiDialog-container:has(.dialogContainer__menu){justify-content:flex-start!important;align-items:flex-start!important}
-  .MuiDialog-root:has(.dialogContainer__menu) .MuiBackdrop-root{background:rgba(0,0,0,.08)!important;backdrop-filter:none!important}
-  .MuiDialog-paperFullScreen:has(.dialogContainer__menu){position:fixed!important;left:var(--tmbc-menu-left,160px)!important;top:0!important;margin:0!important;transform:none!important;width:auto!important;min-width:0!important;max-width:calc(100vw - 200px)!important;height:auto!important;min-height:0!important;max-height:100vh!important;overflow:auto!important;box-shadow:0 8px 28px rgba(0,0,0,.28)!important;border-radius:0 0 6px 0!important}
-  .MuiDialog-paperFullScreen .dialogContainer:has(.dialogContainer__menu){padding:10px 22px 14px!important;height:auto!important;min-height:0!important;width:auto!important}
-  .MuiDialog-paperFullScreen .dialogContainer__header{gap:40px!important;margin:0!important;min-height:0!important}
-  .MuiDialog-paperFullScreen .dialogContainer__header h1{font-size:20px!important;line-height:28px!important}
-  .MuiDialog-paperFullScreen .dialogContainer__header button{width:32px!important;height:32px!important}
-  .MuiDialog-paperFullScreen .dialogContainer:has(.dialogContainer__menu) > div:not(.dialogContainer__header){height:auto!important;min-height:0!important}
-  .MuiDialog-paperFullScreen .dialogContainer__menu{margin-top:8px!important;width:auto!important;gap:0!important;justify-content:flex-start!important}
-  .MuiDialog-paperFullScreen .listContainer{width:auto!important;flex:0 0 auto!important;min-width:0!important;padding:0 18px 0 0!important;margin-right:18px!important;justify-content:flex-start!important}
-  .MuiDialog-paperFullScreen .listContainer > div:first-child{width:auto!important;min-width:150px!important}
-  .MuiDialog-paperFullScreen .listContainer__bottomDivider{margin-top:10px!important;margin-bottom:0!important}
+  /* (v4.15) panneau compact des méga-menus (2026-10-22) retiré : rendu natif. */
   html.tmbc-side-panel-open .pageContent,
         html.tmbc-side-panel-open main,
         html.tmbc-side-panel-open [role="main"],
@@ -852,15 +843,6 @@
   // ne perturbe donc pas les widgets qui mesurent leur propre taille en JS.
   function positionDrawerNextToContent() {
     if (!isElectron || isConsultWindow) return; // inutile en Electron sur la fenêtre de consultation
-    // (2026-10-22) ancre du panneau compact des méga-menus : bord DROIT du menu bleu,
-    // mesuré (transform/centrage ultra-wide compris) et exposé en variable CSS.
-    try {
-      const sbA = getSidebar();
-      if (sbA) {
-        const rr = sbA.getBoundingClientRect();
-        if (rr.width > 0 && rr.right > 0) document.documentElement.style.setProperty('--tmbc-menu-left', Math.round(rr.right) + 'px');
-      }
-    } catch (e) { /* ignore */ }
     const media = window.matchMedia('(min-width: 1920px)');
     // Le menu de gauche = le drawer docké qui contient le papier de navigation
     // (getSidebar()), PAS simplement le premier drawer docké : un panneau latéral
@@ -1329,7 +1311,7 @@
   function setAlign(el, value) {
     // (2026-10-22) le panneau Grand livre gère lui-même ses alignements (cellules vides ou
     // montants à 0,00 des lignes de total remis à gauche par cet aligneur générique).
-    if (el.closest && el.closest('#tmbc-gl-panel')) return;
+    if (el.closest && el.closest('#tmbc-gl-panel, #tmbc-glp-root')) return;
     el.style.setProperty('text-align', value, 'important');
   }
 
@@ -1347,7 +1329,7 @@
 
 
   function styleDataCell(cell, colName, colKey) {
-    if (cell.closest && cell.closest('#tmbc-gl-panel')) return;
+    if (cell.closest && cell.closest('#tmbc-gl-panel, #tmbc-glp-root')) return;
     const cat = columnCategoryFor(colName, colKey);
     if (cat.mono) {
       cell.classList.add('tmbc-mono-font');

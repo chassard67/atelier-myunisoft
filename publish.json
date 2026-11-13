@@ -2,15 +2,15 @@
   "minExtensionVersion": "1.1.0",
   "licenceRequired": true,
   "release": {
-    "version": "1.2.0",
+    "version": "1.3.0",
     "date": "2026-11-13",
     "notes": [
-      "Balance Premium entièrement revue : elle s'ouvre par-dessus la balance MyUnisoft (qui reste intacte dessous), avec la même présentation que Consultation Premium.",
-      "Curseur « Arrêté au » : glisser pour choisir la fin de mois (fin d'exercice par défaut) ; le tableau se recharge tout seul.",
-      "Bandeau des totaux (comptes affichés, débit, crédit, résultat) et total des comptes cochés.",
-      "Colonnes simplifiées : Var % au survol de Var €, validation C / RM en une colonne, PJ seulement s'il y en a, colonnes N-1 masquables.",
-      "Vos options d'affichage sont mémorisées pour chaque dossier ; Échap ou ✕ revient à la balance MyUnisoft.",
-      "Consultation Premium : retour au compte précédent (Retour arrière), numéros de ligne, colonne Lettrage entre Débit et Crédit."
+      "Grand Livre Premium : s'ouvre directement depuis le menu Tenue, par-dessus MyUnisoft (même présentation que Balance et Consultation Premium), avec chargement immédiat et options à gauche (type, plage de comptes, période, exercice, non lettrées, non soldés, tiers centralisés, pièces jointes, commentaires).",
+      "Balance Premium : choix des montants affichés (Solde ; Solde débiteur / créditeur ; Total débits / crédits / Solde ; Total débits / crédits / Soldes débiteur et créditeur).",
+      "Balance Premium : « Comparatif N-1 et N-2 » affiche les deux exercices précédents avec la même présentation que N.",
+      "Balance Premium : curseur « Arrêté au » limité aux mois de l'exercice, plus compact (étiquette 12/2026) ; validations « à faire » / « à valider » correctement affichées comme non validées.",
+      "Consultation Premium : commentaire permanent sous le commentaire annuel, soldes visibles avec les filtres « comptes généraux » et « comptes 6 et 7 », numéros de ligne devant les cases à cocher, boutons alignés sur le tableau.",
+      "Menus Tenue / Révision / Paramètres… : retour à l'affichage MyUnisoft d'origine."
     ]
   },
   "defaultMatches": [

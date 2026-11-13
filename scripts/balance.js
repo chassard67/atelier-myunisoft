@@ -1,8 +1,18 @@
 // ==UserScript==
 // @name         MyUnisoft – Balance : vue 100% personnalisée (v2, API directe)
 // @namespace    https://nicolas.chassard/myunisoft
-// @version      4.0-ext
-// @description  v4.0 (2026-11-13, maquette validée par Nicolas) : REFONTE — Balance Premium s'ouvre EN SURIMPRESSION
+// @version      4.1-ext
+// @description  v4.1 (2026-11-13, demandé par Nicolas) : (1) « Montants affichés » remplace la case « Soldes débiteurs /
+//               créditeurs » : Solde | Solde débiteur / Solde créditeur | Total débits / Total crédits / Solde | Total
+//               débits / Total crédits / Solde débiteur / Solde créditeur (totaux = exercice_mvt de la réponse native,
+//               relevé en direct ; soldes D/C d'un regroupement = somme de ceux de ses comptes) ; colonnes nommées
+//               « Solde débiteur N », « Total débits N-1 »… ; ancien réglage mémorisé repris. (2) « Comparatif N-1 et
+//               N-2 » remplace « Comparer avec N-1 » : N-1 (même réponse) + N-2 (même balance demandée sur la période
+//               décalée de 2 ans, en période personnalisée, seulement quand la case est cochée, fusionnée par n° de
+//               compte), même présentation que N, séparateur vertical entre exercices. (3) Curseur « Arrêté au » :
+//               mois de l'exercice N uniquement, deux fois moins large, étiquette « 12/2026 ». (4) Validation : « AF »
+//               (à faire) et « AV » (à valider) = non validé (codes relevés en direct), infobulle avec le code.
+//               v4.0 (2026-11-13, maquette validée par Nicolas) : REFONTE — Balance Premium s'ouvre EN SURIMPRESSION
 //               (comme Consultation Premium) au lieu de remplacer la balance native, qui reste intacte dessous (plus
 //               aucun bloc natif masqué, plus de bouton dans la barre native, plus de synchronisation forcée avec le
 //               sélecteur natif Générale/Client/Fournisseur). Charte Consultation Premium : en-tête (titre, PREMIUM,
@@ -383,7 +393,9 @@
     centralizeAccount: false,
     unvalidatedOnly: false,
     showRevisionCols: false, // -> extended
-    showDebitCredit: false, // Solde N/N-1 affichés en 2 colonnes Débit/Crédit plutôt qu'1 seule
+    // (v4.1) Présentation des montants : 'solde' | 'sdc' (solde débiteur / créditeur) |
+    // 'tdc' (total débits / total crédits / solde) | 'tdcsdc' (totaux + soldes D/C).
+    amountMode: 'solde',
     showClassSubtotals: false, // vue à plat + une ligne de total par classe (1, 2, 3...), sans hiérarchie dépliable
     selectedKeys: new Set(), // comptes cochés (clic / maj+clic) — remplace la ligne "Résultat" par leur total
     lastClickedSelKey: null, // dernier compte coché, pour l'étendue maj+clic
@@ -412,7 +424,9 @@
     commentCounts: {}, // { id_account: nombre de commentaires } — rempli à la demande (voir refreshCommentCounts)
     aged: false, // "Balance âgée" (uniquement Client/Fournisseur) — voir buildAgedApiUrl
     agedCompareTo: 1, // 1 = Date de facture, 2 = Date d'échéance (reniflé en direct sur le panneau natif)
-    compareN1: true, // (v4.0) colonnes N-1 (Solde N-1, Var €) affichées — 100 % côté client
+    compareN1: true, // (v4.1) « Comparatif N-1 et N-2 » : colonnes N-1 (même réponse) + N-2 (appel complémentaire)
+    n2: null, // (v4.1) { url, loading, error, count } — balance de l'exercice N-2 fusionnée par n° de compte
+    n2Gen: 0,
     revisionFyKey: '', // (v4.0) exercice "début|fin" auquel correspond dossierRevisionId
   };
 
@@ -423,7 +437,7 @@
   // balance s'ouvre toujours sur l'exercice proposé par MyUnisoft).
   const OPTS_KEYS = [
     'subtype', 'filterRange', 'filterRangeUserEdited', 'unbalancedOnly', 'centralizeAccount',
-    'unvalidatedOnly', 'showRevisionCols', 'showDebitCredit', 'showSubtotals', 'showClassSubtotals',
+    'unvalidatedOnly', 'showRevisionCols', 'amountMode', 'showSubtotals', 'showClassSubtotals',
     'showMonthly', 'showMonthlyCumulative', 'compareN1', 'aged', 'agedCompareTo', 'columnWidths',
   ];
   // Options qui changent la requête serveur : un écart avec ce qui a été
@@ -457,6 +471,8 @@
       o = null;
     }
     if (!o || typeof o !== 'object') return false;
+    // (v4.1) ancienne case « Soldes débiteurs / créditeurs » -> mode d'affichage
+    if (!('amountMode' in o) && o.showDebitCredit) o.amountMode = 'sdc';
     let apiChanged = false;
     OPTS_KEYS.forEach((key) => {
       if (!(key in o)) return;
@@ -659,7 +675,7 @@
     // PJ/Com. ont leur propre popover (voir loadDocuments/loadComments) —
     // seules les colonnes numéro de compte / montants ouvrent la fiche de
     // consultation native.
-    return !state.showSubtotals && LINKABLE_COLUMN_IDS.has(colId) && node && node.id_account;
+    return !state.showSubtotals && (LINKABLE_COLUMN_IDS.has(colId) || isAmountColId(colId)) && node && node.id_account;
   }
 
   // -----------------------------------------------------------------------
@@ -911,12 +927,85 @@
         state.loading = false;
         state.expanded = new Set();
         state.commentCounts = {}; // nouvelles données = anciens comptes potentiellement invalides
+        state.n2 = null;
         renderApp();
         refreshCommentCounts();
+        if (state.compareN1) loadN2();
       })
       .catch((e) => {
         state.loading = false;
         state.error = String((e && e.message) || e) + '\nURL appelée : ' + url;
+        renderApp();
+      });
+  }
+
+  // (v4.1) Comparatif N-2 : la réponse native ne porte que N et N-1
+  // (exercice_values / exercice_mvt sur 2 positions). On demande donc la même
+  // balance (mêmes options) sur la période décalée de 2 ans, en période
+  // personnalisée (sans dossier_revision_id, comme une date intermédiaire
+  // native), uniquement quand le comparatif est coché, puis on fusionne par
+  // numéro de compte (N-2 = position 0 de cette réponse).
+  function shiftIsoYears(iso, dy) {
+    const y = Number(iso.slice(0, 4)) + dy;
+    const m = Number(iso.slice(5, 7)) - 1;
+    const d = Number(iso.slice(8, 10));
+    const last = new Date(y, m + 1, 0).getDate();
+    const wasLast = d === new Date(Number(iso.slice(0, 4)), m + 1, 0).getDate();
+    return y + '-' + pad2(m + 1) + '-' + pad2(wasLast ? last : Math.min(d, last));
+  }
+  function buildN2ApiUrl() {
+    const keep = { s: state.startDate, e: state.endDate, id: state.dossierRevisionId };
+    state.startDate = shiftIsoYears(keep.s, -2);
+    state.endDate = shiftIsoYears(keep.e, -2);
+    const fys = state.fiscalYears;
+    state.fiscalYears = [{ start: '0000-00-00', end: '0000-00-00' }]; // force la période personnalisée
+    let url;
+    try {
+      url = buildNormalApiUrl();
+    } finally {
+      state.startDate = keep.s;
+      state.endDate = keep.e;
+      state.fiscalYears = fys;
+      state.dossierRevisionId = keep.id;
+    }
+    return url;
+  }
+  function loadN2() {
+    if (state.aged || !state.data || !Array.isArray(state.data.data) || !state.startDate || !state.endDate) return;
+    const url = buildN2ApiUrl();
+    if (state.n2 && state.n2.url === url && (state.n2.loading || !state.n2.error)) return;
+    const target = state.data;
+    state.n2 = { url, loading: true, error: null, count: 0 };
+    fetch(url, { credentials: 'include', headers: sniff.headers || {} })
+      .then((r) => {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.json();
+      })
+      .then((d2) => {
+        if (state.data !== target) return;
+        const map = new Map();
+        flattenLeaves((d2 && d2.data) || [], []).forEach(({ node }) => {
+          if (!node.account_number) return;
+          const mv = Array.isArray(node.exercice_mvt) ? node.exercice_mvt[0] : null;
+          map.set(String(node.account_number), {
+            solde: numOrNull(node.exercice_values && node.exercice_values[0]),
+            td: mv ? numOrNull(mv.debit) : null,
+            tc: mv ? numOrNull(mv.credit) : null,
+          });
+        });
+        let count = 0;
+        flattenLeaves(target.data, []).forEach(({ node }) => {
+          const x = node.account_number ? map.get(String(node.account_number)) : null;
+          node._n2 = x || null;
+          if (x) count++;
+        });
+        state.n2 = { url, loading: false, error: null, count, missing: Math.max(0, map.size - count) };
+        state.n2Gen++;
+        renderApp();
+      })
+      .catch((e) => {
+        if (state.data !== target) return;
+        state.n2 = { url, loading: false, error: String((e && e.message) || e), count: 0 };
         renderApp();
       });
   }
@@ -957,6 +1046,7 @@
       const reload = restoreOpts();
       installCustomUI();
       if (reload) loadBalance();
+      else if (state.compareN1) loadN2();
       return;
     }
     if (bootstrapTimer) return; // sondage déjà en cours, on ne relance rien de plus
@@ -974,6 +1064,7 @@
         const reload = restoreOpts();
         installCustomUI();
         if (reload) loadBalance();
+        else if (state.compareN1) loadN2();
         return;
       }
       // On ne clique le bouton natif qu'une seule fois : le rechargement en
@@ -1480,19 +1571,42 @@
     { id: 'account_number', label: 'N° Compte', sortable: true, width: '100px' },
     { id: 'label', label: 'Intitulé', sortable: true, width: '260px' },
   ];
-  // Solde N / Solde N-1, sous leur forme "montant unique" (peut être négatif).
-  const SOLDE_COLUMNS = [
-    { id: 'solde_n', label: 'Solde N', sortable: true, align: 'right', width: '118px' },
-    { id: 'solde_n1', label: 'Solde N-1', sortable: true, align: 'right', width: '118px', n1: true },
-  ];
-  // Même chose sous forme "Débit / Crédit" (deux colonnes, toujours positives) :
-  // demande explicite, disponible en Générale comme en Client/Fournisseur.
-  const DEBIT_CREDIT_COLUMNS = [
-    { id: 'debit_n', label: 'Débit N', sortable: true, align: 'right', width: '112px' },
-    { id: 'credit_n', label: 'Crédit N', sortable: true, align: 'right', width: '112px' },
-    { id: 'debit_n1', label: 'Débit N-1', sortable: true, align: 'right', width: '112px', n1: true },
-    { id: 'credit_n1', label: 'Crédit N-1', sortable: true, align: 'right', width: '112px', n1: true },
-  ];
+  // (v4.1) Colonnes de montants générées selon le mode d'affichage choisi
+  // (state.amountMode) et le comparatif (N seul, ou N + N-1 + N-2). Identifiant
+  // de colonne = <nature>_<exercice> : solde / sd (solde débiteur) / sc
+  // (solde créditeur) / td (total débits) / tc (total crédits), et n / n1 / n2.
+  const AMOUNT_MODES = {
+    solde: { kinds: ['solde'], label: 'Solde' },
+    sdc: { kinds: ['sd', 'sc'], label: 'Solde débiteur / Solde créditeur' },
+    tdc: { kinds: ['td', 'tc', 'solde'], label: 'Total débits / Total crédits / Solde' },
+    tdcsdc: { kinds: ['td', 'tc', 'sd', 'sc'], label: 'Total débits / Total crédits / Solde débiteur / Solde créditeur' },
+  };
+  const AMOUNT_KIND_LABEL = { solde: 'Solde', sd: 'Solde débiteur', sc: 'Solde créditeur', td: 'Total débits', tc: 'Total crédits' };
+  const AMOUNT_YEAR_LABEL = { n: 'N', n1: 'N-1', n2: 'N-2' };
+  const AMOUNT_YEAR_INDEX = { n: 0, n1: 1, n2: 2 };
+  const AMOUNT_COL_RE = /^(solde|sd|sc|td|tc)_(n|n1|n2)$/;
+  const isAmountColId = (id) => AMOUNT_COL_RE.test(String(id || ''));
+  const isSoldeColId = (id) => /^solde_(n|n1|n2)$/.test(String(id || ''));
+  function amountColumns() {
+    const mode = AMOUNT_MODES[state.amountMode] || AMOUNT_MODES.solde;
+    const years = state.compareN1 ? ['n', 'n1', 'n2'] : ['n'];
+    const out = [];
+    years.forEach((y) =>
+      mode.kinds.forEach((k) =>
+        out.push({
+          id: k + '_' + y,
+          label: AMOUNT_KIND_LABEL[k] + ' ' + AMOUNT_YEAR_LABEL[y],
+          sortable: true,
+          align: 'right',
+          width: k === 'solde' ? '118px' : '116px',
+          n1: y !== 'n',
+          yearStart: y !== 'n' && k === mode.kinds[0],
+        })
+      )
+    );
+    return out;
+  }
+
   // (v4.0) Var % retirée (affichée au survol de Var €) ; Valid collab et
   // Valid RM fusionnées en une colonne « Valid. » (pastilles C / RM) ; PJ
   // affichée seulement si au moins un compte en a (cf. visibleColumns).
@@ -1614,8 +1728,7 @@
     if (state.showMonthlyCumulative) {
       return [...BASE_COLUMNS_START, ...buildMonthColumns()];
     }
-    const middle = state.showDebitCredit ? DEBIT_CREDIT_COLUMNS : SOLDE_COLUMNS;
-    return [...BASE_COLUMNS_START, ...middle, ...BASE_COLUMNS_END];
+    return [...BASE_COLUMNS_START, ...amountColumns(), ...BASE_COLUMNS_END];
   }
 
   // Total "brut" Débit/Crédit d'un nœud groupe (a des enfants) : somme
@@ -1669,6 +1782,72 @@
     return out;
   }
 
+  // (v4.1) Montants d'un nœud pour un exercice (0 = N, 1 = N-1, 2 = N-2) :
+  // solde, total débits / crédits (exercice_mvt de la réponse native ; N-2 :
+  // balance complémentaire fusionnée dans node._n2), solde débiteur /
+  // créditeur. Pour un regroupement (classe, total, sélection…), les soldes
+  // débiteurs et créditeurs sont la somme de ceux des comptes (pas le
+  // découpage du solde net), les totaux sont ceux de l'API s'ils existent.
+  const numOrNull = (v) => (typeof v === 'number' ? v : typeof v === 'string' && v.trim() !== '' && !isNaN(Number(v)) ? Number(v) : null);
+  function leafYearData(node, yi) {
+    let solde = null;
+    let td = null;
+    let tc = null;
+    if (yi < 2) {
+      solde = numOrNull(node.exercice_values && node.exercice_values[yi]);
+      const mv = Array.isArray(node.exercice_mvt) ? node.exercice_mvt[yi] : null;
+      if (mv) {
+        td = numOrNull(mv.debit);
+        tc = numOrNull(mv.credit);
+      }
+    } else if (node._n2) {
+      solde = node._n2.solde;
+      td = node._n2.td;
+      tc = node._n2.tc;
+    }
+    return {
+      solde,
+      td,
+      tc,
+      sd: solde === null ? null : solde >= 0 ? solde : null,
+      sc: solde === null ? null : solde < 0 ? -solde : null,
+    };
+  }
+  function yearData(node, yi) {
+    const leaves = node._leaves || (node.account_List && node.account_List.length ? flattenLeaves(node.account_List, []).map((r) => r.node) : null);
+    if (!leaves) return leafYearData(node, yi);
+    if (!node._yd || node._yd.gen !== state.n2Gen) node._yd = { gen: state.n2Gen };
+    if (node._yd[yi]) return node._yd[yi];
+    const acc = { solde: null, td: null, tc: null, sd: null, sc: null };
+    const add = (k, v) => {
+      if (v === null) return;
+      acc[k] = (acc[k] || 0) + v;
+    };
+    leaves.forEach((l) => {
+      const d = leafYearData(l, yi);
+      add('solde', d.solde);
+      add('td', d.td);
+      add('tc', d.tc);
+      add('sd', d.sd);
+      add('sc', d.sc);
+    });
+    if (acc.solde !== null || acc.td !== null) {
+      if (acc.sd === null) acc.sd = 0;
+      if (acc.sc === null) acc.sc = 0;
+    }
+    if (yi < 2) {
+      const own = numOrNull(node.exercice_values && node.exercice_values[yi]);
+      if (own !== null) acc.solde = own;
+      const mv = Array.isArray(node.exercice_mvt) ? node.exercice_mvt[yi] : null;
+      if (mv && numOrNull(mv.debit) !== null) {
+        acc.td = numOrNull(mv.debit);
+        acc.tc = numOrNull(mv.credit);
+      }
+    }
+    node._yd[yi] = acc;
+    return acc;
+  }
+
   function getGrossDebitCredit(node) {
     if (node._grossDebitCredit) return node._grossDebitCredit;
     if (node.account_List && node.account_List.length) {
@@ -1720,6 +1899,8 @@
       }
       return typeof arr[idx] === 'number' ? arr[idx] : null;
     }
+    const amc = AMOUNT_COL_RE.exec(colId);
+    if (amc) return yearData(node, AMOUNT_YEAR_INDEX[amc[2]])[amc[1]];
     const ev = node.exercice_values || [];
     switch (colId) {
       case 'account_number':
@@ -1812,6 +1993,7 @@
       // pas "0,00" — sinon le tableau serait noyé de zéros peu lisibles.
       return typeof v === 'number' && v !== 0 ? fmtAmount(v) : '';
     }
+    if (isAmountColId(colId)) return typeof v === 'number' ? fmtAmount(v) : '';
     switch (colId) {
       case 'solde_n':
       case 'solde_n1':
@@ -1854,14 +2036,24 @@
 
   const PJ_ICON_SVG = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true" style="vertical-align:-2px"><path d="M21 12l-8.5 8.5a5 5 0 0 1-7-7L14 5a3.5 3.5 0 0 1 5 5l-8.5 8.5a2 2 0 0 1-3-3L15 8"/></svg>';
   const REVISION_COLUMN_IDS = new Set(['pj', 'com', 'valid', 'valid_collab', 'valid_rm']);
-  // (v4.0) Validation : valeur renvoyée par l'API dans node.validation (VCOL
-  // collaborateur, VRM responsable de mission) ; toute valeur non vide autre
-  // que « 0 / false / non » est considérée comme validée.
-  function isValidated(node, key) {
+  // (v4.1) Validation : node.validation {VCOL collaborateur, VRM responsable
+  // de mission, VSUP superviseur}. Valeurs relevées en direct : « AF » (à
+  // faire) et « AV » (à valider) = non validé ; toute autre valeur non vide
+  // (ne commençant pas par A) est considérée comme validée.
+  const VALIDATION_LABELS = { AF: 'à faire', AV: 'à valider' };
+  function validationCode(node, key) {
     const v = node && node.validation ? node.validation[key] : null;
-    if (v === null || v === undefined || v === false) return false;
-    const t = String(v).trim().toLowerCase();
-    return !!t && !['0', 'false', 'non', 'n', 'no'].includes(t);
+    return v === null || v === undefined || v === false ? '' : String(v).trim().toUpperCase();
+  }
+  function isValidated(node, key) {
+    const t = validationCode(node, key);
+    return !!t && !t.startsWith('A') && !['0', 'FALSE', 'NON', 'N', 'NO'].includes(t);
+  }
+  function validationText(node, key) {
+    const t = validationCode(node, key);
+    if (!t) return 'non renseigné';
+    if (isValidated(node, key)) return 'validé (' + t + ')';
+    return (VALIDATION_LABELS[t] || 'non validé') + ' (' + t + ')';
   }
   // PJ du dossier de révision : colonne affichée seulement si au moins un
   // compte en a (mémorisé par jeu de données).
@@ -1980,7 +2172,7 @@
       if (colId === 'account_number') {
         return matchesAccountNumberFilter(node.account_number, needle);
       }
-      if (AMOUNT_FILTER_COLUMN_IDS.has(colId) || isMonthColumnId(colId)) {
+      if (AMOUNT_FILTER_COLUMN_IDS.has(colId) || isAmountColId(colId) || isMonthColumnId(colId)) {
         return matchesAmountFilter(cellValue(node, colId), needle);
       }
       const v = cellDisplay(node, colId);
@@ -2009,6 +2201,7 @@
     const label = 'Total ' + (classNode.label || classNode.account_number || '');
     const result = { account_number: '', label, exercice_values: [n, n1], varValue: null, varPercent: null, validation: null, nb_da_acc_docs: 0, hasComment: false };
     result._grossDebitCredit = sumGrossDebitCredit(leaves);
+    result._leaves = leaves;
     result.month_values = sumMonthValues(leaves);
     return result;
   }
@@ -2124,8 +2317,13 @@
         <div class="tmb-opt-check-group-title">Affichage</div>
         <div class="tmb-opt-checks">
           <label class="${state.showMonthly || state.showMonthlyCumulative ? 'tmb-opt-disabled' : ''}"><input type="checkbox" id="tmb-unbalanced" ${state.unbalancedOnly ? 'checked' : ''} ${state.showMonthly || state.showMonthlyCumulative ? 'disabled' : ''}/> Non soldés uniquement</label>
-          <label><input type="checkbox" id="tmb-compare-n1" ${state.compareN1 ? 'checked' : ''}/> Comparer avec N-1</label>
-          <label><input type="checkbox" id="tmb-debit-credit" ${state.showDebitCredit ? 'checked' : ''}/> Soldes débiteurs / créditeurs</label>
+          <label><input type="checkbox" id="tmb-compare-n1" ${state.compareN1 ? 'checked' : ''}/> Comparatif N-1 et N-2</label>
+          <div class="tmb-opt-amount">
+            <span>Montants affichés</span>
+            <select id="tmb-amount-mode" title="Présentation des montants (même présentation pour N-1 et N-2)">${Object.keys(AMOUNT_MODES)
+              .map((k) => `<option value="${k}" ${state.amountMode === k ? 'selected' : ''}>${AMOUNT_MODES[k].label}</option>`)
+              .join('')}</select>
+          </div>
           <label><input type="checkbox" id="tmb-subtotals" ${state.showSubtotals ? 'checked' : ''}/> Sous-totaux (avec regroupements)</label>
           <label><input type="checkbox" id="tmb-class-subtotals" ${state.showClassSubtotals ? 'checked' : ''}/> Sous-totaux (sans regroupements)</label>
           <label><input type="checkbox" id="tmb-monthly" ${state.showMonthly ? 'checked' : ''}/> Affichage mensuel</label>
@@ -2171,7 +2369,7 @@
       // des flèches déplier/replier) n'affiche jamais de libellé : c'est là
       // qu'on loge le bouton d'export Excel du tableau tel qu'affiché.
       const label = c.id === 'expand' ? '' : c.label;
-      return `<th data-col="${c.id}" class="${c.sortable ? 'tmb-sortable ' + sortCls : ''}" style="${width ? 'width:' + width + ';' : ''}text-align:${c.align || 'left'} !important"><span class="tmb-th-label">${label}</span>${resizer}</th>`;
+      return `<th data-col="${c.id}" class="${c.sortable ? 'tmb-sortable ' + sortCls : ''}${c.yearStart ? ' tmb-year-start' : ''}" style="${width ? 'width:' + width + ';' : ''}text-align:${c.align || 'left'} !important"><span class="tmb-th-label">${label}</span>${resizer}</th>`;
     }).join('');
   }
 
@@ -2206,7 +2404,7 @@
           return `<td class="tmb-expand-cell" data-col="expand" style="padding-left:${indent}px;text-align:center"></td>`;
         }
         const numericVal = cellValue(node, c.id);
-        const isNegative = (NEGATIVE_HIGHLIGHT_COLUMN_IDS.has(c.id) || isMonthColumnId(c.id)) && typeof numericVal === 'number' && numericVal < 0;
+        const isNegative = (NEGATIVE_HIGHLIGHT_COLUMN_IDS.has(c.id) || isSoldeColId(c.id) || isMonthColumnId(c.id)) && typeof numericVal === 'number' && numericVal < 0;
         const cls = (c.mono ? 'tmb-mono ' : '') + (isNegative ? 'tmb-negative' : '');
         // Petit espace entre le séparateur de colonne et le texte (avant : 0px
         // dans les deux cas, le texte touchait la bordure de la colonne).
@@ -2223,9 +2421,9 @@
             ? `<span class="tmb-pj-link" data-docs-object-id="${xmlEscape(String(node.id_l_dossier_revision_compte))}" title="Pièces jointes">${PJ_ICON_SVG} ${display}</span>`
             : '';
         } else if (c.id === 'valid' && !isSubtotal && node.validation) {
-          const pill = (ok, lab, full) =>
-            `<span class="tmb-valid${ok ? ' tmb-valid-ok' : ''}" title="${full} : ${ok ? 'validé' : 'à faire'}">${lab}</span>`;
-          inner = pill(isValidated(node, 'VCOL'), 'C', 'Collaborateur') + ' ' + pill(isValidated(node, 'VRM'), 'RM', 'Responsable de mission');
+          const pill = (key, lab, full) =>
+            `<span class="tmb-valid${isValidated(node, key) ? ' tmb-valid-ok' : ''}" title="${full} : ${validationText(node, key)}">${lab}</span>`;
+          inner = pill('VCOL', 'C', 'Collaborateur') + ' ' + pill('VRM', 'RM', 'Responsable de mission');
         } else if (c.id === 'com' && !isSubtotal && node.id_account) {
           const hasCom = !!node.hasComment;
           const count = hasCom ? state.commentCounts[node.id_account] : undefined;
@@ -2238,7 +2436,7 @@
           cellTitle = 'Variation : ' + fmtPercent(node.varPercent);
         }
         const titleAttr = cellTitle ? ` title="${xmlEscape(cellTitle)}"` : '';
-        return `<td class="${cls}" data-col="${c.id}" style="text-align:${c.align || 'left'} !important${style ? ';' + style : ''}"${titleAttr}>${inner}</td>`;
+        return `<td class="${cls}${c.yearStart ? ' tmb-year-start' : ''}" data-col="${c.id}" style="text-align:${c.align || 'left'} !important${style ? ';' + style : ''}"${titleAttr}>${inner}</td>`;
       }).join('')}
     </tr>`;
   }
@@ -2305,6 +2503,7 @@
       hasComment: false,
     };
     result._grossDebitCredit = sumGrossDebitCredit(grossLeaves);
+    result._leaves = grossLeaves;
     result.month_values = sumMonthValues(grossLeaves);
     return result;
   }
@@ -2356,6 +2555,7 @@
       hasComment: false,
     };
     result._grossDebitCredit = sumGrossDebitCredit(leaves);
+    result._leaves = leaves;
     result.month_values = sumMonthValues(leaves);
     return result;
   }
@@ -2409,6 +2609,7 @@
       hasComment: false,
     };
     result._grossDebitCredit = sumGrossDebitCredit(leaves);
+    result._leaves = leaves;
     result.month_values = sumMonthValues(leaves);
     return result;
   }
@@ -2751,7 +2952,7 @@
       // la fraction (0.06) pour obtenir le même "6%" affiché dans Excel.
       return { type: 'percent', value: raw / 100 };
     }
-    if (EXPORT_NUMERIC_COLUMN_IDS.has(colId) || isMonthColumnId(colId)) {
+    if (EXPORT_NUMERIC_COLUMN_IDS.has(colId) || isAmountColId(colId) || isMonthColumnId(colId)) {
       if (typeof raw !== 'number') return { type: bold ? 'bold-text' : 'text', value: '' };
       return { type: bold ? 'bold-number' : 'number', value: raw };
     }
@@ -2807,14 +3008,14 @@
   function fyContaining(iso) {
     return state.fiscalYears.find((f) => f.start <= iso && iso <= f.end) || null;
   }
-  // Mois proposés : exercice N-1 + exercice en cours (+ N+1 s'il existe).
+  // (v4.1) Mois proposés : uniquement ceux de l'exercice affiché (N) ; les
+  // autres exercices passent par le sélecteur « Exercice(s) ».
   function timelineModel() {
     const fys = state.fiscalYears.slice().sort((a, b) => (a.start < b.start ? -1 : 1));
     if (!fys.length || !state.endDate) return null;
     const cur = fyContaining(state.endDate) || fyContaining(state.startDate) || fys[fys.length - 1];
-    const ci = fys.indexOf(cur);
-    const from = fys[Math.max(0, ci - 1)];
-    const to = fys[Math.min(fys.length - 1, ci + 1)];
+    const from = cur;
+    const to = cur;
     const months = [];
     let y = Number(from.start.slice(0, 4));
     let m = Number(from.start.slice(5, 7)) - 1;
@@ -2839,7 +3040,7 @@
     const status = fy && mo.end === fy.end ? "fin d'exercice" : 'situation intermédiaire';
     return {
       date: isoToFrDate(mo.end),
-      thumb: 'Fin ' + MOIS_LONG[mo.m] + ' ' + mo.y,
+      thumb: pad2(mo.m + 1) + '/' + mo.y,
       status: status + (fy ? ' · exercice du ' + isoToFrDate(fy.start) + ' au ' + isoToFrDate(fy.end) : ''),
     };
   }
@@ -2855,9 +3056,8 @@
     const exW = curEnd < 0 ? 100 - exL : ((curEnd + 1) / n) * 100 - exL;
     const ticks = model.months
       .map((x, i) => {
-        const yearStart = x.m === 0 || i === 0;
-        const text = yearStart ? MOIS_COURT[x.m] + ' ' + x.y : x.m % 3 === 0 ? MOIS_COURT[x.m] : '';
-        return `<div class="tmb-tl-tick" style="left:${pos(i)}%"><i style="height:${yearStart ? 13 : 6}px"></i><span>${text}</span></div>`;
+        const edge = i === 0 || i === n - 1;
+        return `<div class="tmb-tl-tick" style="left:${pos(i)}%"><i style="height:${edge ? 11 : 6}px"></i><span>${pad2(x.m + 1)}</span></div>`;
       })
       .join('');
     return `
@@ -2935,7 +3135,13 @@
     const soc = tab ? tab.textContent.trim() : '';
     const type = state.aged ? 'Balance âgée' : ['Balance générale', 'Balance clients', 'Balance fournisseurs'][state.subtype] || 'Balance';
     const per = state.startDate && state.endDate ? 'du ' + isoToFrDate(state.startDate) + ' au ' + isoToFrDate(state.endDate) : '';
-    return [soc, type, per, state.compareN1 && !state.aged ? 'comparée à N-1' : ''].filter(Boolean).join(' · ');
+    let cmp = '';
+    if (state.compareN1 && !state.aged) {
+      cmp = 'comparée à N-1 et N-2';
+      if (state.n2 && state.n2.loading) cmp += ' (N-2 en cours de chargement…)';
+      else if (state.n2 && state.n2.error) cmp += ' (N-2 indisponible : ' + state.n2.error + ')';
+    }
+    return [soc, type, per, cmp].filter(Boolean).join(' · ');
   }
 
   function renderApp() {
@@ -2989,6 +3195,7 @@
     if (cmp)
       cmp.addEventListener('change', () => {
         state.compareN1 = cmp.checked;
+        if (state.compareN1) loadN2();
         renderApp();
       });
     const reset = $('#tmb-reset-opts');
@@ -3002,7 +3209,7 @@
         }
         Object.assign(state, {
           unbalancedOnly: true, centralizeAccount: false, unvalidatedOnly: false, showRevisionCols: false,
-          showDebitCredit: false, showSubtotals: false, showClassSubtotals: false, showMonthly: false,
+          amountMode: 'solde', showSubtotals: false, showClassSubtotals: false, showMonthly: false,
           showMonthlyCumulative: false, compareN1: true, aged: false, columnWidths: {},
         });
         loadBalance();
@@ -3168,10 +3375,10 @@
     // Solde débiteur/créditeur : simple recalcul d'affichage à partir des
     // mêmes données déjà chargées (exercice_values), pas un paramètre API —
     // pas besoin de recharger, comme "Afficher les sous-totaux".
-    const debitCreditEl = $('#tmb-debit-credit');
+    const debitCreditEl = $('#tmb-amount-mode');
     if (debitCreditEl)
       debitCreditEl.addEventListener('change', () => {
-        state.showDebitCredit = debitCreditEl.checked;
+        state.amountMode = AMOUNT_MODES[debitCreditEl.value] ? debitCreditEl.value : 'solde';
         // Le tri en cours peut porter sur une colonne qui disparaît (solde_n
         // <-> debit_n/credit_n) : on le réinitialise pour éviter un tri sur
         // une colonne devenue invisible.
@@ -3499,6 +3706,9 @@
       #tmb-root .tmb-opt-checks label { display: flex; align-items: flex-start; gap: 7px; font-size: 13px; line-height: 1.3; cursor: pointer; margin: 0; }
       #tmb-root .tmb-opt-checks input[type=checkbox] { margin: 2px 0 0; flex: 0 0 auto; accent-color: #0f2a52; }
       #tmb-root .tmb-opt-checks label.tmb-opt-disabled { opacity: .5; cursor: not-allowed; }
+      #tmb-root .tmb-opt-amount { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: inherit; margin: 1px 0 2px; }
+      #tmb-root .tmb-opt-amount select { width: 100%; max-width: 100%; font-size: 12px; padding: 4px 4px; border: 1px solid #c7d0de; border-radius: 4px; background: #fff; }
+      #tmb-root th.tmb-year-start, #tmb-root td.tmb-year-start { border-left: 2px solid #9db4d8 !important; }
       #tmb-root .tmb-load-btn { margin-top: 4px; width: 100%; background: #0f2a52; color: #fff; border: 0; border-radius: 6px; padding: 9px; font: inherit; font-weight: 600; cursor: pointer; }
       #tmb-root .tmb-load-btn:disabled { opacity: .6; cursor: progress; }
       #tmb-root .tmb-link-btn { border: 0; background: transparent; color: #1b4f9c; text-decoration: underline; font: inherit; font-size: 12px; cursor: pointer; padding: 2px; }
@@ -3512,7 +3722,7 @@
       #tmb-root .tmb-tl-status { color: #5b6b85; font-size: 12px; }
       #tmb-root .tmb-tl-hint { color: #5b6b85; font-size: 11px; }
       #tmb-root .tmb-tl-hint b { font-family: ${MONO}; color: #1b4f9c; }
-      #tmb-root .tmb-tl-zone { position: relative; height: 58px; margin: 4px 4px 0; }
+      #tmb-root .tmb-tl-zone { position: relative; height: 58px; margin: 4px 4px 0; width: 50%; min-width: 360px; max-width: calc(100% - 8px); }
       #tmb-root .tmb-tl-track, #tmb-root .tmb-tl-ex, #tmb-root .tmb-tl-fill { position: absolute; top: 27px; height: 4px; border-radius: 2px; }
       #tmb-root .tmb-tl-track { left: 0; right: 0; background: #d5dce8; }
       #tmb-root .tmb-tl-ex { background: #9db4d8; }
@@ -3561,9 +3771,7 @@
       #tmb-root .tmb-expand-toggle { cursor: pointer; display: inline-block; width: 14px; color: #1b4f9c; }
       #tmb-root .tmb-select-checkbox { cursor: pointer; margin: 0; vertical-align: middle; accent-color: #0f2a52; }
       #tmb-root .tmb-acct-link { color: #1b4f9c; cursor: pointer; text-decoration: underline; }
-      #tmb-root td[data-col="solde_n"] .tmb-acct-link, #tmb-root td[data-col="solde_n1"] .tmb-acct-link,
-      #tmb-root td[data-col^="debit"] .tmb-acct-link, #tmb-root td[data-col^="credit"] .tmb-acct-link,
-      #tmb-root td[data-col="var_eur"] .tmb-acct-link { color: inherit; text-decoration: none; }
+      #tmb-root td:not([data-col="account_number"]) .tmb-acct-link { color: inherit; text-decoration: none; }
       #tmb-root td .tmb-acct-link:hover { text-decoration: underline; }
       #tmb-root .tmb-pj-link { cursor: pointer; color: #1b4f9c; }
       #tmb-root .tmb-com-link { cursor: pointer; display: inline-block; min-width: 18px; padding: 0 5px; border-radius: 9px; background: #e4ecfa; color: #1b4f9c; font-size: 11px; font-weight: 700; line-height: 16px; }
