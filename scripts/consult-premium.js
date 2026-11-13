@@ -1,8 +1,17 @@
 // ==UserScript==
 // @name         MyUnisoft - Consultation Premium (page de consultation de compte maison)
 // @namespace    https://nicolas.chassard/myunisoft
-// @version      2.16-ext
-// @description  v2.16 (2026-11-13) : largeur fixe = zone de contenu native (.pageContent) au lieu de suivre le tableau ;
+// @version      2.17-ext
+// @description  v2.17 (2026-11-13, retours de Nicolas) : (1) pièce jointe par glisser-déposer d'un fichier sur une ligne
+//               (écriture de la ligne) ou sur la zone « Déposer une pièce » (écriture sélectionnée) — même appel que
+//               Inser (POST /document/add_all_types) ; (2) boutons « PJ Permanent » et « PJ DR » du compte (nombre de
+//               pièces + liste au clic) lus dans la balance de révision native (GET /api/v1/revision/dashboard/
+//               balance-revision, documents location=ACCOUNT / da_acc), grisés si le dossier de révision n'est pas
+//               ouvert (ou le compte pas encore ouvert dedans pour PJ DR) ; (3) aperçu PJ affiché à droite du curseur ;
+//               (4) champs de commentaires en blanc ; (5) jeton : un seul en-tête Authorization (les en-têtes relevés
+//               sur fetch sont en minuscules : le serveur recevait « ancien, nouveau » -> 401 invalid token), attente
+//               calme du renouvellement natif quand le jeton est échu (onglet en arrière-plan) au lieu d'une erreur.
+//               v2.16 (2026-11-13) : largeur fixe = zone de contenu native (.pageContent) au lieu de suivre le tableau ;
 //               Imprimer dans une fenêtre dédiée (page blanche avec la feuille de style de l'appli).
 //               v2.15 (2026-11-13, retour de Nicolas) : lignes lues dans le grand livre (filtres Fournisseurs /
 //               Clients…) : la colonne « Pièce jointe » du classeur était prise pour la colonne « Pièce » (même début
@@ -367,9 +376,14 @@
   // ------------------------------------------------------------------
   const PROD_WS = 'https://prod-ws.myunisoft.fr';
   let apiBase = null;
-  const getHeaders = (extra) => { const base = Object.assign({ 'Content-Type': 'application/json' }, (window.TMBC.getApiHeaders && window.TMBC.getApiHeaders()) || {}); const b = bestAuth(); if (b) base.Authorization = b; return Object.assign(base, extra || {}); };
+  // (v2.17) Un seul en-tête Authorization : les en-têtes relevés sur fetch arrivent en minuscules
+  // (« authorization ») ; y ajouter « Authorization » donnait au serveur « Bearer ancien, Bearer nouveau »
+  // -> HTTP 401 « invalid token » (cause des messages de session expirée).
+  const setAuth = (h, au) => { Object.keys(h).forEach((k) => { if (/^authorization$/i.test(k)) delete h[k]; }); if (au) h.Authorization = au; return h; };
+  const getHeaders = (extra) => { const base = Object.assign({ 'Content-Type': 'application/json' }, (window.TMBC.getApiHeaders && window.TMBC.getApiHeaders()) || {}); const b = bestAuth(); if (b) setAuth(base, b); return Object.assign(base, extra || {}); };
   const societyId = () => { const m = /\/tab\/(\d+)\//.exec(location.pathname); return m ? m[1] : ''; };
   let tokOverride = ''; // jeton lu dans la réponse du renouvellement de session natif
+  const jwtExp = (a) => { try { const t = String(a || '').replace(/^Bearer\s+/i, '').split('.'); return JSON.parse(atob(t[1].replace(/-/g, '+').replace(/_/g, '/'))).exp || 0; } catch (e) { return 0; } };
   const jwtIat = (a) => { try { const t = String(a || '').replace(/^Bearer\s+/i, '').split('.'); return JSON.parse(atob(t[1].replace(/-/g, '+').replace(/_/g, '/'))).iat || 0; } catch (e) { return 0; } };
   function bestAuth() {
     const c = [];
@@ -390,9 +404,9 @@
   async function waitFreshToken(v0, a0) {
     if (Date.now() - tokWarn > 8000) { tokWarn = Date.now(); toast('Session MyUnisoft expirée : rafraîchissement du jeton…'); }
     nudge();
-    for (let i = 0; i < 60; i++) {
+    for (let i = 0; i < 180; i++) {
       if (coreVer !== v0 || (curAuth() && curAuth() !== a0)) return true;
-      if (i === 12 || i === 30) nudge();
+      if (i % 20 === 12) nudge();
       await new Promise((res) => setTimeout(res, 500));
     }
     return false;
@@ -402,8 +416,23 @@
     const t = await r.clone().text().catch(() => '');
     return /token/i.test(t) || r.status === 401;
   };
+  // (v2.17) Jeton échu (l'appli le renouvelle seule ~30 s avant l'échéance, 5 min de vie ; onglet en
+  // arrière-plan = renouvellement retardé par le navigateur) : on attend calmement le renouvellement
+  // natif (jamais rejoué par nous) avant d'appeler, au lieu d'essuyer un 401.
+  async function ensureFreshToken() {
+    const ok = () => { const e = jwtExp(curAuth()); return !e || e > Date.now() / 1000 + 5; };
+    if (ok()) return;
+    nudge();
+    for (let i = 0; i < 180; i++) {
+      if (ok()) return;
+      if (i === 6 && Date.now() - tokWarn > 8000) { tokWarn = Date.now(); toast('Session MyUnisoft : attente du renouvellement automatique…'); }
+      if (i % 20 === 19) nudge();
+      await new Promise((res) => setTimeout(res, 500));
+    }
+  }
   // fetch vers prod-ws avec le jeton courant ; sur jeton expiré : attente d'un jeton frais puis un nouvel essai
   async function tokFetch(url, mk) {
+    await ensureFreshToken();
     let r = await ofetch(url, mk());
     if (await isTokErr(r)) {
       if (await waitFreshToken(coreVer, curAuth())) r = await ofetch(url, mk());
@@ -413,11 +442,12 @@
   let coreVer = 0;
   let coreNative = null; // { origin, headers } vus sur un appel natif /api/v1/*
   async function coreFetch(path, body) {
+    await ensureFreshToken();
     if (coreNative) {
       const call = async () => {
         const h = Object.assign({}, coreNative.headers, { 'Content-Type': 'application/json' });
         const au = bestAuth();
-        if (au) h.Authorization = au;
+        if (au) setAuth(h, au);
         return ofetch(coreNative.origin + path, { method: 'POST', headers: h, credentials: 'include', body: JSON.stringify(body) });
       };
       let r;
@@ -1128,6 +1158,8 @@
       toast('Pièce supprimée.');
     } catch (e) { apiLog.push('ERR delete pj ' + e.message); toast('Suppression de pièce : ' + e.message); }
   }
+  const lastMouse = { x: 0, y: 0 };
+  document.addEventListener('mousemove', (e) => { lastMouse.x = e.clientX; lastMouse.y = e.clientY; }, true);
   function hidePjPreview() {
     clearTimeout(pjTimer);
     const e = document.getElementById('tmbc-cp-pjprev');
@@ -1144,8 +1176,15 @@
       const pr = p.getBoundingClientRect();
       const box = document.createElement('div');
       box.id = 'tmbc-cp-pjprev';
+      // (v2.17) aperçu à droite du curseur de la souris (à gauche s'il n'y a pas la place)
+      const mx = lastMouse.x || pr.left + pr.width * 0.42, my = lastMouse.y || pr.top + 70;
+      const bw = Math.round(Math.min(760, Math.max(420, pr.width * 0.45)));
+      const bh = Math.round(Math.min(window.innerHeight - 40, Math.max(420, pr.height - 90)));
+      let bl = mx + 24;
+      if (bl + bw > window.innerWidth - 10) bl = Math.max(10, mx - 24 - bw);
+      const bt = Math.max(10, Math.min(my - 60, window.innerHeight - bh - 10));
       box.style.cssText = 'position:fixed;z-index:1200;pointer-events:none;background:#fff;border:1px solid #8e9bb0;border-radius:6px;box-shadow:0 8px 26px rgba(15,42,82,.3);padding:10px;overflow:auto;display:flex;flex-direction:column;gap:10px;' +
-        'left:' + Math.round(pr.left + pr.width * 0.42) + 'px;top:' + Math.round(pr.top + 70) + 'px;width:' + Math.round(pr.width * 0.58 - 24) + 'px;height:' + Math.round(pr.height - 90) + 'px';
+        'left:' + Math.round(bl) + 'px;top:' + Math.round(bt) + 'px;width:' + bw + 'px;height:' + bh + 'px';
       box.innerHTML = docs.length
         ? docs.map((d) => '<div style="display:flex;flex-direction:column;gap:6px;flex:1;min-height:0">' + (d.big ? '<img src="' + esc(d.big) + '" alt="" style="max-width:100%;max-height:100%;object-fit:contain;border:1px solid #ddd">' : '') + '<b style="word-break:break-all">' + esc(d.name) + '</b></div>').join('')
         : '<div style="color:#5b6b85;padding:10px">Aucune pièce jointe sur cette écriture.</div>';
@@ -1169,20 +1208,123 @@
     inp.addEventListener('change', async () => {
       const f = inp.files && inp.files[0];
       inp.remove();
-      if (!f) return;
-      try {
-        toast('Envoi de « ' + f.name + ' »…');
-        const qs = 'location=ENTRIES&object_id=' + encodeURIComponent(l.entryId) + '&filename_extension=' + encodeURIComponent(f.name) + '&type_result=1';
-        const buf = await f.arrayBuffer();
-        const r = await tokFetch(PROD_WS + '/document/add_all_types?' + qs, () => ({ method: 'POST', headers: getHeaders({ 'Content-Type': 'application/octet-stream' }), credentials: 'include', body: buf }));
-        if (!r.ok) throw new Error('HTTP ' + r.status + ' ' + (await r.text().catch(() => '')).slice(0, 160));
-        docCache.delete(l.entryId);
-        S.lines.filter((x) => x.entryId === l.entryId).forEach((x) => { x.pj = true; });
-        render(true);
-        toast('Pièce « ' + f.name + ' » ajoutée à l\'écriture.');
-      } catch (e) { apiLog.push('ERR upload ' + e.message); toast('Ajout de la pièce : ' + e.message); }
+      if (f) await uploadToEntry(l, f);
     });
     inp.click();
+  }
+  // Dépôt d'une pièce sur une écriture : POST /document/add_all_types (appel natif relevé en saisie premium)
+  async function uploadToEntry(l, f) {
+    if (!l || !l.entryId) { toast('Écriture inconnue : impossible d\'y joindre une pièce.'); return; }
+    try {
+      toast('Envoi de « ' + f.name + ' »…');
+      const qs = 'location=ENTRIES&object_id=' + encodeURIComponent(l.entryId) + '&filename_extension=' + encodeURIComponent(f.name) + '&type_result=1';
+      const buf = await f.arrayBuffer();
+      const r = await tokFetch(PROD_WS + '/document/add_all_types?' + qs, () => ({ method: 'POST', headers: getHeaders({ 'Content-Type': 'application/octet-stream' }), credentials: 'include', body: buf }));
+      if (!r.ok) throw new Error('HTTP ' + r.status + ' ' + (await r.text().catch(() => '')).slice(0, 160));
+      docCache.delete(l.entryId);
+      S.lines.filter((x) => x.entryId === l.entryId).forEach((x) => { x.pj = true; });
+      render(true);
+      toast('Pièce « ' + f.name + ' » ajoutée à l\'écriture du ' + (l.dateTxt || '') + '.');
+    } catch (e) { apiLog.push('ERR upload ' + e.message); toast('Ajout de la pièce : ' + e.message); }
+  }
+
+  // (v2.17) PJ du compte dans le dossier de révision : « PJ Permanent » (nbAccDocs, documents
+  // location=ACCOUNT, objet = id du compte) et « PJ DR » (nbDaAccDocs, location=da_acc, objet =
+  // idLDossierRevisionCompte) lus dans la balance de révision (GET /api/v1/revision/dashboard/
+  // balance-revision?dossierRevisionId=, appel natif relevé). Champs grisés si le dossier de révision
+  // de l'exercice n'est pas ouvert (pas d'identifiant) ou si le compte n'y est pas encore ouvert (PJ DR).
+  const drAccCache = {};
+  // Dossier de révision de l'exercice consulté : GET /dadp/dossier_revision_list?balance=true (appel
+  // natif relevé : id_dossier_revision, start_date, end_date) ; à défaut, identifiant relevé en passant.
+  const drListCache = {};
+  async function drForPeriod() {
+    const soc = societyId();
+    try {
+      if (!drListCache[soc]) {
+        const rr = await tokFetch(PROD_WS + '/dadp/dossier_revision_list?balance=true', () => ({ headers: getHeaders({ 'society-id': soc }), credentials: 'include' }));
+        if (!rr.ok) throw new Error('HTTP ' + rr.status);
+        const j = await rr.json();
+        drListCache[soc] = (j && j.dossier_revision_list) || [];
+      }
+      const end = S.end || '';
+      const hit = drListCache[soc].find((d) => d.start_date <= end && end <= d.end_date) || drListCache[soc].find((d) => d.start_date <= S.start && S.start <= d.end_date);
+      if (hit) return hit.id_dossier_revision;
+      if (drListCache[soc].length) return null;
+    } catch (e) { apiLog.push('ERR dossier_revision_list ' + e.message); }
+    return currentDr();
+  }
+  async function loadDrAccounts() {
+    const dr = await drForPeriod();
+    if (!dr) return null;
+    const key = societyId() + '|' + dr;
+    if (drAccCache[key]) return drAccCache[key];
+    const h = getHeaders({ 'society-id': societyId() });
+    delete h['Content-Type'];
+    const r = await ofetch('https://app.myunisoft.fr/api/v1/revision/dashboard/balance-revision?dossierRevisionId=' + encodeURIComponent(dr) + '&limit=5000&offset=0', { headers: h, credentials: 'include' });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const j = await r.json();
+    const map = {};
+    ((j && j.data) || []).forEach((d) => { map[String(d.accountNumber)] = d; });
+    drAccCache[key] = map;
+    return map;
+  }
+  const accDocCache = {};
+  async function loadAccDocs(loc, id) {
+    const k = loc + '|' + id;
+    if (accDocCache[k]) return accDocCache[k];
+    const rr = await tokFetch(PROD_WS + '/document/all_types?location=' + loc + '&objectId=' + encodeURIComponent(id), () => ({ headers: getHeaders({ 'society-id': societyId() }), credentials: 'include' }));
+    if (!rr.ok) throw new Error('HTTP ' + rr.status);
+    const raw = await rr.json();
+    const docs = (Array.isArray(raw) ? raw : []).map((d) => ({ name: (d.name || d.filename || 'Document') + (d.extension && !String(d.name || '').endsWith('.' + d.extension) ? '.' + d.extension : ''), link: d.link || d.url || d.download || '', big: bigUrl(d) }));
+    accDocCache[k] = docs;
+    return docs;
+  }
+  async function refreshAccPj() {
+    const p = document.getElementById(PANEL_ID);
+    if (!p) return;
+    const box = p.querySelector('[data-accpj]');
+    if (!box) return;
+    const set = (kind, state, text, title) => {
+      const el = box.querySelector('[data-pjk="' + kind + '"]');
+      if (!el) return;
+      el.dataset.state = state;
+      el.querySelector('b').textContent = text;
+      el.title = title;
+    };
+    const num = S.acc;
+    if (!num) { set('perm', 'off', '—', 'Choisis un compte'); set('dr', 'off', '—', 'Choisis un compte'); return; }
+    let map = null;
+    try { map = await loadDrAccounts(); } catch (e) { apiLog.push('ERR balance-revision ' + e.message); }
+    if (num !== S.acc) return;
+    const d = map && map[num];
+    S.accPj = { num, d };
+    if (!map) {
+      set('perm', 'off', '—', 'Dossier de révision non ouvert pour cet exercice');
+      set('dr', 'off', '—', 'Dossier de révision non ouvert pour cet exercice');
+      return;
+    }
+    set('perm', d && d.accountId ? 'on' : 'off', d ? String(d.nbAccDocs || 0) : '—', d ? 'Pièces permanentes du compte (clic : liste)' : 'Compte absent du dossier de révision');
+    set('dr', d && d.idLDossierRevisionCompte ? 'on' : 'off', d && d.idLDossierRevisionCompte ? String(d.nbDaAccDocs || 0) : '—', d && d.idLDossierRevisionCompte ? 'Pièces du dossier de révision (clic : liste)' : 'Compte pas encore ouvert dans le dossier de révision');
+  }
+  async function showAccPjList(kind, anchor) {
+    const d = S.accPj && S.accPj.num === S.acc ? S.accPj.d : null;
+    if (!d) return;
+    const loc = kind === 'perm' ? 'ACCOUNT' : 'da_acc';
+    const id = kind === 'perm' ? d.accountId : d.idLDossierRevisionCompte;
+    if (!id) return;
+    closePjMenu();
+    let docs = [];
+    try { docs = await loadAccDocs(loc, id); } catch (e) { toast('Pièces : ' + e.message); return; }
+    const r = anchor.getBoundingClientRect();
+    const m = document.createElement('div');
+    m.id = 'tmbc-cp-ctx';
+    m.style.cssText = 'position:fixed;z-index:1260;min-width:260px;max-width:460px;background:#fff;border:1px solid #8e9bb0;border-radius:6px;box-shadow:0 8px 24px rgba(15,42,82,.3);padding:4px 0;font-size:13px;left:' + Math.max(10, Math.min(window.innerWidth - 470, r.left)) + 'px;top:' + Math.round(r.bottom + 4) + 'px';
+    m.innerHTML = docs.length
+      ? docs.map((x, i) => '<div data-i="' + i + '" style="padding:7px 14px;cursor:pointer;color:#1b4f9c;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(x.name) + '</div>').join('')
+      : '<div style="padding:8px 14px;color:#5b6b85">Aucune pièce.</div>';
+    m.addEventListener('click', (ev) => { const it = ev.target.closest('[data-i]'); if (!it) return; const x = docs[+it.dataset.i]; closePjMenu(); if (x && (x.link || x.big)) window.open(x.link || x.big, 'tmb-pj-window', 'width=1000,height=900,resizable=yes,scrollbars=yes'); });
+    document.body.appendChild(m);
+    setTimeout(() => document.addEventListener('mousedown', pjMenuOut, true), 0);
   }
 
   // ------------------------------------------------------------------
@@ -1408,6 +1550,8 @@
       '#' + PANEL_ID + ' tbody tr.tot td{background:#b4c6e7;font-weight:700;color:#0f2a52;border-top:2px solid #0f2a52}#' + PANEL_ID + ' tbody tr.tot2 td{background:#dbe5f5;color:#0f2a52}#' + PANEL_ID + ' tbody tr.tot3 td{background:#fff0b3;color:#0f2a52;font-weight:700}' +
       '#' + PANEL_ID + ' tbody tr.sel{background:#fff4cc}#' + PANEL_ID + ' tbody tr.act{background:#dbe8fb!important}' +
       '#' + PANEL_ID + ' input:focus,#' + PANEL_ID + ' select:focus{outline:2px solid #6a9be0;outline-offset:0}' +
+      '#' + PANEL_ID + ' .cp-accpj[data-state=off]{opacity:.45;cursor:not-allowed}#' + PANEL_ID + ' .cp-accpj b{font-family:' + MONO + ';margin-left:4px}' +
+      '#' + PANEL_ID + ' [data-dropzone].over{background:#e4ecfa;border-color:#1b4f9c}#' + PANEL_ID + ' tbody tr.dropover td{background:#dbe8fb!important;box-shadow:inset 0 2px 0 #1b4f9c,inset 0 -2px 0 #1b4f9c}' +
       '</style>' +
       // en-tête
       '<div data-head style="display:flex;align-items:center;gap:14px;padding:12px 20px 6px;flex-wrap:wrap;box-sizing:border-box;max-width:100%;min-width:min(100%,760px)">' +
@@ -1446,8 +1590,14 @@
       '</div></div>' +
       // (v2.13) commentaire permanent SOUS le commentaire annuel
       '<div style="display:flex;flex-direction:column;gap:6px;flex:1 1 320px;min-width:260px;max-width:640px">' +
-      '<div style="display:flex;flex-direction:column;gap:3px"><span style="' + lbl + '">Commentaire annuel (exercice)</span><input data-acoma type="text" autocomplete="off" style="' + inp + ';width:100%;background:#fffbe6"></div>' +
-      '<div style="display:flex;flex-direction:column;gap:3px"><span style="' + lbl + '">Commentaire permanent</span><input data-acomp type="text" autocomplete="off" style="' + inp + ';width:100%;background:#fffbe6"></div></div>' +
+      '<div style="display:flex;flex-direction:column;gap:3px"><span style="' + lbl + '">Commentaire annuel (exercice)</span><input data-acoma type="text" autocomplete="off" style="' + inp + ';width:100%;background:#fff"></div>' +
+      '<div style="display:flex;flex-direction:column;gap:3px"><span style="' + lbl + '">Commentaire permanent</span><input data-acomp type="text" autocomplete="off" style="' + inp + ';width:100%;background:#fff"></div></div>' +
+      // (v2.17) pièces jointes : dépôt sur l'écriture sélectionnée + PJ Permanent / PJ DR du compte
+      '<div data-accpj style="display:flex;flex-direction:column;gap:6px;flex:0 0 250px">' +
+      '<div data-dropzone title="Glisse un fichier ici pour le joindre à l\'écriture sélectionnée (ou dépose-le directement sur une ligne du tableau)" style="border:2px dashed #9db4d8;border-radius:6px;padding:8px 10px;font-size:12px;color:#1b4f9c;text-align:center;line-height:1.35">Déposer une pièce sur l\'écriture sélectionnée<br><span style="color:#5b6b85">(ou directement sur une ligne)</span></div>' +
+      '<div style="display:flex;gap:6px">' +
+      '<button type="button" data-pjk="perm" data-state="off" class="cp-accpj" style="' + btn + ';flex:1;padding:6px 8px">PJ Permanent <b>—</b></button>' +
+      '<button type="button" data-pjk="dr" data-state="off" class="cp-accpj" style="' + btn + ';flex:1;padding:6px 8px">PJ DR <b>—</b></button></div></div>' +
       '</div>' +
       // soldes
       '<div style="display:flex;gap:12px;padding:10px 20px 8px;flex-wrap:wrap"><div data-bar style="flex:0 1 auto;max-width:100%;box-sizing:border-box;background:#0f2a52;color:#fff;border-radius:8px;padding:9px 14px;display:flex;gap:24px;align-items:center;justify-content:space-between;flex-wrap:wrap">' +
@@ -1585,6 +1735,41 @@
       if (!l) return;
       ev.preventDefault(); ev.stopPropagation();
       showPjMenu(l, ev);
+    });
+    // (v2.17) PJ Permanent / PJ DR : liste des pièces au clic
+    p.addEventListener('click', (ev) => {
+      const b = ev.target.closest && ev.target.closest('.cp-accpj');
+      if (!b) return;
+      ev.stopPropagation();
+      if (b.dataset.state === 'on') showAccPjList(b.dataset.pjk, b);
+    }, true);
+    // (v2.17) Glisser-déposer d'un fichier : sur une ligne = pièce jointe de cette écriture ;
+    // sur la zone « Déposer une pièce » = écriture sélectionnée (ligne active).
+    const hasFiles = (ev) => ev.dataTransfer && Array.from(ev.dataTransfer.types || []).includes('Files');
+    const clearDrop = () => { p.querySelectorAll('tr.dropover').forEach((t) => t.classList.remove('dropover')); const z = p.querySelector('[data-dropzone]'); if (z) z.classList.remove('over'); };
+    p.addEventListener('dragover', (ev) => {
+      if (!hasFiles(ev)) return;
+      const tr = ev.target.closest && ev.target.closest('tbody tr[data-id]');
+      const zone = ev.target.closest && ev.target.closest('[data-dropzone]');
+      if (!tr && !zone) return;
+      ev.preventDefault();
+      ev.dataTransfer.dropEffect = 'copy';
+      clearDrop();
+      if (tr) tr.classList.add('dropover'); else zone.classList.add('over');
+    });
+    p.addEventListener('dragleave', (ev) => { if (!ev.relatedTarget || !p.contains(ev.relatedTarget)) clearDrop(); });
+    p.addEventListener('drop', (ev) => {
+      if (!hasFiles(ev)) return;
+      const tr = ev.target.closest && ev.target.closest('tbody tr[data-id]');
+      const zone = ev.target.closest && ev.target.closest('[data-dropzone]');
+      if (!tr && !zone) return;
+      ev.preventDefault();
+      clearDrop();
+      const f = ev.dataTransfer.files && ev.dataTransfer.files[0];
+      if (!f) return;
+      const l = tr ? S.lines.find((x) => x.id === +tr.dataset.id) : S.lines.find((x) => x.id === S.active);
+      if (!l) { toast('Sélectionne d\'abord une écriture (clic sur la ligne), ou dépose le fichier directement sur la ligne.'); return; }
+      uploadToEntry(l, f);
     });
     p.addEventListener('mouseover', (ev) => {
       const cc = ev.target.closest('[data-cp]');
@@ -1990,6 +2175,7 @@
       render();
       prefetchComments(S.lines);
       loadAccComments(num);
+      refreshAccPj();
       updateCpHeaders();
       loadCounterparts(num);
     } catch (e) {

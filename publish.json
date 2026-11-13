@@ -2,13 +2,12 @@
   "minExtensionVersion": "1.1.0",
   "licenceRequired": true,
   "release": {
-    "version": "1.3.4",
+    "version": "1.3.5",
     "date": "2026-11-13",
     "notes": [
-      "Balance, Grand Livre et Consultation Premium : largeur fixe, celle de la zone de contenu MyUnisoft (elle ne change plus selon le tableau).",
-      "Imprimer fonctionne à nouveau (fenêtre d'impression dédiée) dans Balance, Grand Livre et Consultation Premium.",
-      "Balance Premium : colonne Valid. avant Commentaire, texte du commentaire affiché (sur plusieurs lignes si besoin).",
-      "Grand Livre Premium : commentaires de compte dans l'en-tête du compte, Lettrage entre Débit et Crédit, sous-totaux mensuels / trimestriels, option Solde progressif, tiers centralisés par défaut, filtre de comptes remis à zéro en changeant de type."
+      "Consultation Premium : glisser-déposer d'un fichier sur une ligne pour le joindre à l'écriture (ou sur la zone « Déposer une pièce » pour l'écriture sélectionnée).",
+      "Consultation Premium : boutons PJ Permanent et PJ DR du compte (nombre de pièces, liste au clic), grisés si le dossier de révision n'est pas ouvert.",
+      "Consultation Premium : moins de messages « session expirée » (correction de l'en-tête d'authentification, attente du renouvellement automatique) ; aperçu des pièces à droite de la souris ; commentaires sur fond blanc ; total Crédit aligné à droite."
     ]
   },
   "defaultMatches": [

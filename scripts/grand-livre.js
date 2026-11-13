@@ -79,7 +79,7 @@
 
   const { isDisabled, getApiHeaders, registerScan, MONO_FONT_STACK } = window.TMBC;
   // v1.15 : jeton le plus récent (fourni par consult-premium.js) pour les appels grand livre / liste de comptes
-  const ownHeaders = () => { const h = Object.assign({}, getApiHeaders()); try { const b = window.TMBC_BEST_AUTH && window.TMBC_BEST_AUTH(); if (b) h.Authorization = b; } catch (e) { /* ignore */ } return h; };
+  const ownHeaders = () => { const h = Object.assign({}, getApiHeaders()); try { const b = window.TMBC_BEST_AUTH && window.TMBC_BEST_AUTH(); if (b) { Object.keys(h).forEach((k) => { if (/^authorization$/i.test(k)) delete h[k]; }); h.Authorization = b; } } catch (e) { /* ignore */ } return h; };
   const MONO = MONO_FONT_STACK || 'Consolas, monospace';
   const BTN_ATTR = 'data-tmbc-gl-btn';
   const PANEL_ID = 'tmbc-gl-panel';
@@ -1135,6 +1135,8 @@
     glpClose();
   }
 
+  const glpMouse = { x: 0, y: 0 };
+  document.addEventListener('mousemove', (e) => { glpMouse.x = e.clientX; glpMouse.y = e.clientY; }, true);
   let glpPjTimer = null;
   function glpHidePj() {
     clearTimeout(glpPjTimer);
@@ -1150,8 +1152,12 @@
       const r = root.getBoundingClientRect();
       const box = document.createElement('div');
       box.id = 'glp-pjprev';
-      const w = Math.round(Math.min(760, r.width * 0.5));
-      box.style.cssText = 'right:' + Math.round(window.innerWidth - r.right + 30) + 'px;top:' + Math.round(r.top + 60) + 'px;width:' + w + 'px;height:' + Math.round(r.height - 90) + 'px';
+      const w = Math.round(Math.min(760, Math.max(420, r.width * 0.45)));
+      const h = Math.round(Math.min(window.innerHeight - 40, Math.max(420, r.height - 90)));
+      let l = glpMouse.x + 24;
+      if (l + w > window.innerWidth - 10) l = Math.max(10, glpMouse.x - 24 - w);
+      const t = Math.max(10, Math.min(glpMouse.y - 60, window.innerHeight - h - 10));
+      box.style.cssText = 'left:' + Math.round(l) + 'px;top:' + Math.round(t) + 'px;width:' + w + 'px;height:' + h + 'px';
       const img = document.createElement('img');
       img.alt = '';
       img.src = String(url) + '/preview?y=1400';
@@ -1279,8 +1285,8 @@
     #${GLP_ID} td.pj a{color:#1b4f9c}
     #${GLP_ID} tr.acc td{background:#e8eef8;color:#0f2a52;padding:7px 8px;border-top:1px solid #aebbd0;position:sticky;top:34px;z-index:1}
     #${GLP_ID} tr.acc b{font-family:${MONO}}
-    #${GLP_ID} tr.acc .acom{margin-left:18px;color:#7a5a00;background:#fffbe6;border-radius:4px;padding:1px 6px;font-size:12px}
-    #${GLP_ID} tr.acc td.acom{margin:0;border-radius:0;background:#fffbe6!important;color:#7a5a00;font-size:12px;white-space:normal!important}
+    #${GLP_ID} tr.acc .acom{margin-left:18px;color:#3a4a63;background:#fff;border-radius:4px;padding:1px 6px;font-size:12px}
+    #${GLP_ID} tr.acc td.acom{margin:0;border-radius:0;background:#fff!important;color:#3a4a63;font-size:12px;white-space:normal!important}
     #${GLP_ID} tr.sub td{background:#f7f9fc;color:#0f2a52;font-weight:600;font-style:italic}
     #${GLP_ID} .glp-tchk{display:flex;align-items:center;gap:6px;white-space:nowrap;font-size:13px;cursor:pointer}
     #${GLP_ID} .glp-tchk input{width:auto!important;height:auto!important;flex:0 0 auto!important;margin:0!important;accent-color:#0f2a52}

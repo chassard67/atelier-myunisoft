@@ -1,8 +1,10 @@
 // ==UserScript==
 // @name         MyUnisoft - Premium (core)
 // @namespace    https://nicolas.chassard/myunisoft
-// @version      4.15-ext
-// @description  v4.15 (2026-11-13, demandé par Nicolas) : panneau compact des méga-menus (Tenue, Révision,
+// @version      4.16-ext
+// @description  v4.16 (2026-11-13) : l'aligneur de cellules ignore aussi Consultation Premium et Balance Premium (le total Crédit
+//               de Consultation Premium était remis à gauche).
+//               v4.15 (2026-11-13, demandé par Nicolas) : panneau compact des méga-menus (Tenue, Révision,
 //               Déclarations, Paramètres… resserrés et collés à la barre bleue, ajouté le 2026-10-22) supprimé :
 //               les menus retrouvent leur affichage MyUnisoft natif. L'aligneur de cellules ignore aussi la
 //               surimpression Grand Livre Premium (#tmbc-glp-root), qui gère ses propres alignements.
@@ -1311,7 +1313,7 @@
   function setAlign(el, value) {
     // (2026-10-22) le panneau Grand livre gère lui-même ses alignements (cellules vides ou
     // montants à 0,00 des lignes de total remis à gauche par cet aligneur générique).
-    if (el.closest && el.closest('#tmbc-gl-panel, #tmbc-glp-root')) return;
+    if (el.closest && el.closest('#tmbc-gl-panel, #tmbc-glp-root, #tmbc-cp-panel, #tmb-root')) return;
     el.style.setProperty('text-align', value, 'important');
   }
 
@@ -1329,7 +1331,7 @@
 
 
   function styleDataCell(cell, colName, colKey) {
-    if (cell.closest && cell.closest('#tmbc-gl-panel, #tmbc-glp-root')) return;
+    if (cell.closest && cell.closest('#tmbc-gl-panel, #tmbc-glp-root, #tmbc-cp-panel, #tmb-root')) return;
     const cat = columnCategoryFor(colName, colKey);
     if (cat.mono) {
       cell.classList.add('tmbc-mono-font');
