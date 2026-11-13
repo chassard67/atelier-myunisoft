@@ -1,8 +1,13 @@
 // ==UserScript==
 // @name         MyUnisoft - Consultation Premium (page de consultation de compte maison)
 // @namespace    https://nicolas.chassard/myunisoft
-// @version      2.17-ext
-// @description  v2.17 (2026-11-13, retours de Nicolas) : (1) pièce jointe par glisser-déposer d'un fichier sur une ligne
+// @version      2.18-ext
+// @description  v2.18 (2026-11-13, diagnostics de Nicolas lus) : PJ Permanent / PJ DR branchés sur les appels natifs
+//               relevés : lecture GET /document/all_types (account + id du compte ; da_acc + idLDossierRevisionCompte),
+//               ajout POST /document/add_all_types (location=account&object_id=<id compte> ; location=da_acc&object_id=
+//               <id compte>&object_id2=<dossier_revision_id>) — clic = liste + « Ajouter une pièce… », ou glisser un
+//               fichier sur le bouton ; grisés si le dossier de révision de l'exercice n'est pas ouvert.
+//               v2.17 (2026-11-13, retours de Nicolas) : (1) pièce jointe par glisser-déposer d'un fichier sur une ligne
 //               (écriture de la ligne) ou sur la zone « Déposer une pièce » (écriture sélectionnée) — même appel que
 //               Inser (POST /document/add_all_types) ; (2) boutons « PJ Permanent » et « PJ DR » du compte (nombre de
 //               pièces + liste au clic) lus dans la balance de révision native (GET /api/v1/revision/dashboard/
@@ -1228,9 +1233,11 @@
     } catch (e) { apiLog.push('ERR upload ' + e.message); toast('Ajout de la pièce : ' + e.message); }
   }
 
-  // (v2.17) PJ du compte dans le dossier de révision : « PJ Permanent » (nbAccDocs, documents
-  // location=ACCOUNT, objet = id du compte) et « PJ DR » (nbDaAccDocs, location=da_acc, objet =
-  // idLDossierRevisionCompte) lus dans la balance de révision (GET /api/v1/revision/dashboard/
+  // (v2.18, appels natifs relevés dans les diagnostics de Nicolas) PJ du compte dans le dossier de
+  // révision : « PJ Permanent » = documents location=account, objet = id du compte (lecture
+  // GET /document/all_types?location=account&objectId=<id compte>, ajout POST /document/add_all_types?
+  // location=account&object_id=<id compte>) ; « PJ DR » = location=da_acc (lecture objectId=
+  // idLDossierRevisionCompte, ajout object_id=<id compte>&object_id2=<dossier_revision_id>) lus dans la balance de révision (GET /api/v1/revision/dashboard/
   // balance-revision?dossierRevisionId=, appel natif relevé). Champs grisés si le dossier de révision
   // de l'exercice n'est pas ouvert (pas d'identifiant) ou si le compte n'y est pas encore ouvert (PJ DR).
   const drAccCache = {};
@@ -1255,6 +1262,7 @@
   }
   async function loadDrAccounts() {
     const dr = await drForPeriod();
+    S.drId = dr || null;
     if (!dr) return null;
     const key = societyId() + '|' + dr;
     if (drAccCache[key]) return drAccCache[key];
@@ -1303,26 +1311,53 @@
       set('dr', 'off', '—', 'Dossier de révision non ouvert pour cet exercice');
       return;
     }
-    set('perm', d && d.accountId ? 'on' : 'off', d ? String(d.nbAccDocs || 0) : '—', d ? 'Pièces permanentes du compte (clic : liste)' : 'Compte absent du dossier de révision');
-    set('dr', d && d.idLDossierRevisionCompte ? 'on' : 'off', d && d.idLDossierRevisionCompte ? String(d.nbDaAccDocs || 0) : '—', d && d.idLDossierRevisionCompte ? 'Pièces du dossier de révision (clic : liste)' : 'Compte pas encore ouvert dans le dossier de révision');
+    const accId = (d && d.accountId) || (S.accAll.find((a) => a.num === num) || {}).id;
+    S.accPj.accId = accId ? parseInt(accId, 10) : null;
+    set('perm', S.accPj.accId ? 'on' : 'off', d ? String(d.nbAccDocs || 0) : '0', 'Pièces permanentes du compte : clic = liste / ajout, ou glisser un fichier ici');
+    set('dr', S.accPj.accId ? 'on' : 'off', d ? String(d.nbDaAccDocs || 0) : '0', 'Pièces du dossier de révision : clic = liste / ajout, ou glisser un fichier ici');
+  }
+  async function uploadAccPj(kind, f) {
+    const pj = S.accPj && S.accPj.num === S.acc ? S.accPj : null;
+    if (!pj || !pj.accId || !S.drId) { toast('Dossier de révision non ouvert pour cet exercice.'); return; }
+    const qs = kind === 'perm'
+      ? 'location=account&object_id=' + pj.accId
+      : 'location=da_acc&object_id=' + pj.accId + '&object_id2=' + encodeURIComponent(S.drId);
+    try {
+      toast('Envoi de « ' + f.name + ' »…');
+      const buf = await f.arrayBuffer();
+      const r = await tokFetch(PROD_WS + '/document/add_all_types?' + qs + '&filename_extension=' + encodeURIComponent(f.name) + '&type_result=1', () => ({ method: 'POST', headers: getHeaders({ 'Content-Type': 'application/octet-stream', 'society-id': societyId() }), credentials: 'include', body: buf }));
+      if (!r.ok) throw new Error('HTTP ' + r.status + ' ' + (await r.text().catch(() => '')).slice(0, 160));
+      Object.keys(accDocCache).forEach((k) => delete accDocCache[k]);
+      Object.keys(drAccCache).forEach((k) => delete drAccCache[k]);
+      toast('Pièce « ' + f.name + ' » ajoutée (' + (kind === 'perm' ? 'PJ Permanent' : 'PJ DR') + ').');
+      refreshAccPj();
+    } catch (e) { apiLog.push('ERR upload acc ' + e.message); toast('Ajout de la pièce : ' + e.message); }
+  }
+  function pickAccPj(kind) {
+    const inp = document.createElement('input');
+    inp.type = 'file';
+    inp.style.display = 'none';
+    document.body.appendChild(inp);
+    inp.addEventListener('change', () => { const f = inp.files && inp.files[0]; inp.remove(); if (f) uploadAccPj(kind, f); });
+    inp.click();
   }
   async function showAccPjList(kind, anchor) {
-    const d = S.accPj && S.accPj.num === S.acc ? S.accPj.d : null;
-    if (!d) return;
-    const loc = kind === 'perm' ? 'ACCOUNT' : 'da_acc';
-    const id = kind === 'perm' ? d.accountId : d.idLDossierRevisionCompte;
-    if (!id) return;
+    const pj = S.accPj && S.accPj.num === S.acc ? S.accPj : null;
+    if (!pj || !pj.accId) return;
+    const d = pj.d;
+    const loc = kind === 'perm' ? 'account' : 'da_acc';
+    const id = kind === 'perm' ? pj.accId : d && d.idLDossierRevisionCompte;
     closePjMenu();
     let docs = [];
-    try { docs = await loadAccDocs(loc, id); } catch (e) { toast('Pièces : ' + e.message); return; }
+    if (id) { try { docs = await loadAccDocs(loc, id); } catch (e) { toast('Pièces : ' + e.message); return; } }
     const r = anchor.getBoundingClientRect();
     const m = document.createElement('div');
     m.id = 'tmbc-cp-ctx';
     m.style.cssText = 'position:fixed;z-index:1260;min-width:260px;max-width:460px;background:#fff;border:1px solid #8e9bb0;border-radius:6px;box-shadow:0 8px 24px rgba(15,42,82,.3);padding:4px 0;font-size:13px;left:' + Math.max(10, Math.min(window.innerWidth - 470, r.left)) + 'px;top:' + Math.round(r.bottom + 4) + 'px';
-    m.innerHTML = docs.length
+    m.innerHTML = '<div data-add style="padding:7px 14px;cursor:pointer;color:#0f2a52;font-weight:600;border-bottom:1px solid #e3e8f0">Ajouter une pièce…</div>' + (docs.length
       ? docs.map((x, i) => '<div data-i="' + i + '" style="padding:7px 14px;cursor:pointer;color:#1b4f9c;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(x.name) + '</div>').join('')
-      : '<div style="padding:8px 14px;color:#5b6b85">Aucune pièce.</div>';
-    m.addEventListener('click', (ev) => { const it = ev.target.closest('[data-i]'); if (!it) return; const x = docs[+it.dataset.i]; closePjMenu(); if (x && (x.link || x.big)) window.open(x.link || x.big, 'tmb-pj-window', 'width=1000,height=900,resizable=yes,scrollbars=yes'); });
+      : '<div style="padding:8px 14px;color:#5b6b85">Aucune pièce.</div>');
+    m.addEventListener('click', (ev) => { if (ev.target.closest('[data-add]')) { closePjMenu(); pickAccPj(kind); return; } const it = ev.target.closest('[data-i]'); if (!it) return; const x = docs[+it.dataset.i]; closePjMenu(); if (x && (x.link || x.big)) window.open(x.link || x.big, 'tmb-pj-window', 'width=1000,height=900,resizable=yes,scrollbars=yes'); });
     document.body.appendChild(m);
     setTimeout(() => document.addEventListener('mousedown', pjMenuOut, true), 0);
   }
@@ -1550,7 +1585,7 @@
       '#' + PANEL_ID + ' tbody tr.tot td{background:#b4c6e7;font-weight:700;color:#0f2a52;border-top:2px solid #0f2a52}#' + PANEL_ID + ' tbody tr.tot2 td{background:#dbe5f5;color:#0f2a52}#' + PANEL_ID + ' tbody tr.tot3 td{background:#fff0b3;color:#0f2a52;font-weight:700}' +
       '#' + PANEL_ID + ' tbody tr.sel{background:#fff4cc}#' + PANEL_ID + ' tbody tr.act{background:#dbe8fb!important}' +
       '#' + PANEL_ID + ' input:focus,#' + PANEL_ID + ' select:focus{outline:2px solid #6a9be0;outline-offset:0}' +
-      '#' + PANEL_ID + ' .cp-accpj[data-state=off]{opacity:.45;cursor:not-allowed}#' + PANEL_ID + ' .cp-accpj b{font-family:' + MONO + ';margin-left:4px}' +
+      '#' + PANEL_ID + ' .cp-accpj.over{background:#e4ecfa;border-color:#1b4f9c}#' + PANEL_ID + ' .cp-accpj[data-state=off]{opacity:.45;cursor:not-allowed}#' + PANEL_ID + ' .cp-accpj b{font-family:' + MONO + ';margin-left:4px}' +
       '#' + PANEL_ID + ' [data-dropzone].over{background:#e4ecfa;border-color:#1b4f9c}#' + PANEL_ID + ' tbody tr.dropover td{background:#dbe8fb!important;box-shadow:inset 0 2px 0 #1b4f9c,inset 0 -2px 0 #1b4f9c}' +
       '</style>' +
       // en-tête
@@ -1746,11 +1781,11 @@
     // (v2.17) Glisser-déposer d'un fichier : sur une ligne = pièce jointe de cette écriture ;
     // sur la zone « Déposer une pièce » = écriture sélectionnée (ligne active).
     const hasFiles = (ev) => ev.dataTransfer && Array.from(ev.dataTransfer.types || []).includes('Files');
-    const clearDrop = () => { p.querySelectorAll('tr.dropover').forEach((t) => t.classList.remove('dropover')); const z = p.querySelector('[data-dropzone]'); if (z) z.classList.remove('over'); };
+    const clearDrop = () => { p.querySelectorAll('tr.dropover').forEach((t) => t.classList.remove('dropover')); p.querySelectorAll('.over').forEach((z) => z.classList.remove('over')); };
     p.addEventListener('dragover', (ev) => {
       if (!hasFiles(ev)) return;
       const tr = ev.target.closest && ev.target.closest('tbody tr[data-id]');
-      const zone = ev.target.closest && ev.target.closest('[data-dropzone]');
+      const zone = ev.target.closest && ev.target.closest('[data-dropzone], .cp-accpj[data-state=on]');
       if (!tr && !zone) return;
       ev.preventDefault();
       ev.dataTransfer.dropEffect = 'copy';
@@ -1761,12 +1796,13 @@
     p.addEventListener('drop', (ev) => {
       if (!hasFiles(ev)) return;
       const tr = ev.target.closest && ev.target.closest('tbody tr[data-id]');
-      const zone = ev.target.closest && ev.target.closest('[data-dropzone]');
+      const zone = ev.target.closest && ev.target.closest('[data-dropzone], .cp-accpj[data-state=on]');
       if (!tr && !zone) return;
       ev.preventDefault();
       clearDrop();
       const f = ev.dataTransfer.files && ev.dataTransfer.files[0];
       if (!f) return;
+      if (zone && zone.classList.contains('cp-accpj')) { uploadAccPj(zone.dataset.pjk, f); return; }
       const l = tr ? S.lines.find((x) => x.id === +tr.dataset.id) : S.lines.find((x) => x.id === S.active);
       if (!l) { toast('Sélectionne d\'abord une écriture (clic sur la ligne), ou dépose le fichier directement sur la ligne.'); return; }
       uploadToEntry(l, f);

@@ -2,12 +2,11 @@
   "minExtensionVersion": "1.1.0",
   "licenceRequired": true,
   "release": {
-    "version": "1.3.5",
+    "version": "1.3.6",
     "date": "2026-11-13",
     "notes": [
-      "Consultation Premium : glisser-déposer d'un fichier sur une ligne pour le joindre à l'écriture (ou sur la zone « Déposer une pièce » pour l'écriture sélectionnée).",
-      "Consultation Premium : boutons PJ Permanent et PJ DR du compte (nombre de pièces, liste au clic), grisés si le dossier de révision n'est pas ouvert.",
-      "Consultation Premium : moins de messages « session expirée » (correction de l'en-tête d'authentification, attente du renouvellement automatique) ; aperçu des pièces à droite de la souris ; commentaires sur fond blanc ; total Crédit aligné à droite."
+      "Consultation Premium : PJ Permanent et PJ DR permettent d'ajouter une pièce (clic → « Ajouter une pièce… », ou glisser un fichier sur le bouton) et listent les pièces du compte.",
+      "Consultation Premium : glisser-déposer d'un fichier sur une ligne pour le joindre à l'écriture ; moins de messages « session expirée »."
     ]
   },
   "defaultMatches": [
