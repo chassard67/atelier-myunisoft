@@ -1,8 +1,17 @@
 // ==UserScript==
 // @name         MyUnisoft – Balance : vue 100% personnalisée (v2, API directe)
 // @namespace    https://nicolas.chassard/myunisoft
-// @version      4.3-ext
-// @description  v4.3 (2026-11-13, retours de Nicolas) : (1) Échap ne ferme plus la surimpression (✕ uniquement) ;
+// @version      4.4-ext
+// @description  v4.4 (2026-11-13, retours de Nicolas ; dossier TLAJ GEMEHL vérifié en direct) : exercice N = celui que
+//               MyUnisoft étiquette « N » (GET /exercices), et non celui qui contient aujourd'hui (exercices décalés
+//               01/07-30/06 : N = 2025/2026). Sélecteur natif « Exercice(s) » piloté par libellé (« N+1 », « N »…), ses
+//               options n'étant pas dans l'ordre de fiscal_year_list ; liste « Exercice(s) » = tous les exercices du
+//               dossier avec leur libellé ; étiquettes du curseur = libellés MyUnisoft ; identifiant d'exercice envoyé
+//               seulement pour les dates exactes de l'exercice relevé. (1) curseur « Arrêté au » : exercices lus aussi par GET
+//               /exercices, pour afficher N et N+1 même quand la réponse native ne liste pas N+1 (un mois de N+1 est
+//               alors demandé en période personnalisée) ; curseur placé par défaut à la fin de N ; (2) vues mensuelles et
+//               trimestrielles : colonnes PJ et Com. affichées si « Colonnes de révision » est coché.
+//               v4.3 (2026-11-13, retours de Nicolas) : (1) Échap ne ferme plus la surimpression (✕ uniquement) ;
 //               (2) légende du bas et texte « Glisser le curseur · ← → mois par mois » retirés ; (3) colonnes
 //               déplaçables par glisser-déposer de l'en-tête (ordre mémorisé par dossier, comme Consultation Premium) ;
 //               (4) au-dessus des cases, en ligne de filtres : bouton « tout déplier / replier » en Sous-totaux avec
@@ -444,6 +453,7 @@
     compareN1: true, // (v4.1) « Comparatif N-1 et N-2 » : colonnes N-1 (même réponse) + N-2 (appel complémentaire)
     n2: null, // (v4.1) { url, loading, error, count } — balance de l'exercice N-2 fusionnée par n° de compte
     n2Gen: 0,
+    exercises: [], // (v4.4) exercices du dossier (GET /exercices) : N+1 même absent de fiscal_year_list
     revisionFyKey: '', // (v4.0) exercice "début|fin" auquel correspond dossierRevisionId
   };
 
@@ -512,6 +522,8 @@
   // ignore la date de fin (ex. compte 44571100 à 16 426,26 au lieu de 0 au 31/05).
   // Les dates exactes d'un exercice gardent l'identifiant (changement d'exercice).
   function isCustomPeriod() {
+    // (v4.4) l'identifiant d'exercice relevé n'est envoyé que pour les dates exactes de cet exercice
+    if (state.revisionFyKey) return state.startDate + '|' + state.endDate !== state.revisionFyKey;
     return (
       state.fiscalYears.length > 0 &&
       !state.fiscalYears.some((f) => f.start === state.startDate && f.end === state.endDate)
@@ -1211,7 +1223,7 @@
     });
   }
 
-  async function switchFiscalYear(idx) {
+  async function switchFiscalYear(idx, label) {
     if (!titleBlockRef) return false;
     const combo = findFiscalYearCombobox(titleBlockRef.parentElement || titleBlockRef);
     if (!combo) return false;
@@ -1224,11 +1236,14 @@
       const opts = document.querySelectorAll('[role="listbox"] [role="option"]');
       return opts.length ? opts : null;
     }, 2000);
-    if (!options || !options[idx]) {
+    // (v4.4) Options natives = libellés MyUnisoft (« N+1 », « N », « N-1 »…), dans
+    // un ordre différent de fiscal_year_list : on choisit par libellé quand on le connaît.
+    const target = label ? Array.from(options || []).find((o) => o.textContent.trim() === label) : options && options[idx];
+    if (!target) {
       if (options) document.body.click(); // referme le menu si ouvert sans bonne option
       return false;
     }
-    clickLikeUser(options[idx]);
+    clickLikeUser(target);
 
     await sleep(250); // laisse React appliquer la sélection avant de chercher le bouton
     const loadBtn = findButtonByText('Charger le tableau');
@@ -1773,19 +1788,22 @@
     // PJ/Com/Valid ne doivent PAS apparaître ici, quel que soit l'état des
     // autres cases).
     const pm = periodicMode();
+    // (v4.4) PJ et Com. restent proposées en vue mensuelle / trimestrielle
+    // (affichées si « Colonnes de révision » est coché, cf. visibleColumnsRaw).
+    const REV_END = BASE_COLUMNS_END.filter((c) => c.id === 'pj' || c.id === 'com');
     if (pm === 'M') {
-      return [...BASE_COLUMNS_START, ...monthColumns()];
+      return [...BASE_COLUMNS_START, ...monthColumns(), ...REV_END];
     }
     if (pm === 'MC') {
-      return [...BASE_COLUMNS_START, ...buildMonthColumns()];
+      return [...BASE_COLUMNS_START, ...buildMonthColumns(), ...REV_END];
     }
     if (pm === 'Q') {
       const q = buildQuarterColumns();
       if (q.length) q.push({ id: 'monthly_total', label: 'Total', sortable: true, align: 'right', width: '110px' });
-      return [...BASE_COLUMNS_START, ...q];
+      return [...BASE_COLUMNS_START, ...q, ...REV_END];
     }
     if (pm === 'QC') {
-      return [...BASE_COLUMNS_START, ...buildQuarterColumns()];
+      return [...BASE_COLUMNS_START, ...buildQuarterColumns(), ...REV_END];
     }
     return [...BASE_COLUMNS_START, ...amountColumns(), ...BASE_COLUMNS_END];
   }
@@ -2382,11 +2400,15 @@
   // 9. Rendu HTML.
   // -----------------------------------------------------------------------
   function renderOptionsPanel() {
-    const fy = state.fiscalYears
-      .map(
-        (f, i) =>
-          `<option value="${i}" ${f.start === state.startDate && f.end === state.endDate ? 'selected' : ''}>${f.label}</option>`
-      )
+    // (v4.4) tous les exercices du dossier (GET /exercices), libellés MyUnisoft
+    const fy = tlYears()
+      .slice()
+      .reverse()
+      .map((f) => {
+        const ex = exerciseFor(f);
+        const txt = (ex && ex.label ? ex.label + ' — ' : '') + isoToFrDate(f.start) + ' au ' + isoToFrDate(f.end);
+        return `<option value="${f.start}|${f.end}" ${f.start === state.startDate && f.end === state.endDate ? 'selected' : ''}>${txt}</option>`;
+      })
       .join('');
     const seg = (v, lab) =>
       `<button type="button" class="tmb-seg-btn${state.subtype === v ? ' tmb-seg-on' : ''}" data-subtype="${v}">${lab}</button>`;
@@ -3134,21 +3156,68 @@
   // s'il existe ; si l'exercice affiché est un autre exercice (choisi dans
   // « Exercice(s) »), cet exercice et le suivant.
   const todayIso = () => new Date().toISOString().slice(0, 10);
+  // (v4.4) exercices proposés par le curseur : ceux de la réponse native +
+  // ceux de GET /exercices (appel natif relevé) ; N+1 apparaît ainsi même
+  // quand la balance native ne le liste pas.
+  function tlYears() {
+    const seen = {};
+    return state.fiscalYears
+      .concat(state.exercises || [])
+      .filter((f) => {
+        const k = f.start + '|' + f.end;
+        if (seen[k]) return false;
+        seen[k] = 1;
+        return true;
+      })
+      .sort((a, b) => (a.start < b.start ? -1 : 1));
+  }
+  function tlFyContaining(iso) {
+    return tlYears().find((f) => f.start <= iso && iso <= f.end) || null;
+  }
+  async function loadExercises() {
+    const soc = extractTabId(location.pathname);
+    if (!soc) return;
+    try {
+      const h = Object.assign({}, sniff.headers || {});
+      h['society-id'] = soc;
+      const r = await fetch('https://prod-ws.myunisoft.fr/exercices?society_id=' + encodeURIComponent(soc), { credentials: 'include', headers: h });
+      if (!r.ok) return;
+      const j = await r.json();
+      state.exercises = (Array.isArray(j) ? j : [])
+        .filter((e) => e && /^\d{4}-\d{2}-\d{2}/.test(String(e.start_date || '')) && /^\d{4}-\d{2}-\d{2}/.test(String(e.end_date || '')))
+        .map((e) => ({ start: String(e.start_date).slice(0, 10), end: String(e.end_date).slice(0, 10), label: String(e.label || '') }));
+      if (document.getElementById('tmb-root')) renderApp();
+    } catch (e) {
+      /* curseur limité aux exercices de la réponse native */
+    }
+  }
+  // Exercice tel que MyUnisoft le nomme (GET /exercices : « N », « N+1 »…).
+  function exerciseFor(fy) {
+    return fy ? (state.exercises || []).find((e) => e.start === fy.start && e.end === fy.end) || null : null;
+  }
+  // Exercice N : celui que MyUnisoft étiquette « N » ; à défaut, celui qui contient aujourd'hui.
+  function exerciseN() {
+    const e = (state.exercises || []).find((x) => x.label === 'N');
+    if (e) return e;
+    return tlFyContaining(todayIso());
+  }
   function exerciseTag(fys, fy) {
-    const t = fyContaining(todayIso());
+    const ex = exerciseFor(fy);
+    if (ex && ex.label) return ex.label;
+    const t = exerciseN();
     const ti = t ? fys.indexOf(fys.find((f) => f.start === t.start)) : -1;
     const i = fys.indexOf(fy);
-    if (ti < 0 || i < 0) return fy.start.slice(0, 4);
+    if (ti < 0 || i < 0) return fy.start.slice(0, 4) === fy.end.slice(0, 4) ? fy.start.slice(0, 4) : fy.start.slice(0, 4) + '/' + fy.end.slice(0, 4);
     const d = i - ti;
     return d === 0 ? 'N' : d > 0 ? 'N+' + d : 'N' + d;
   }
   function timelineModel() {
-    const fys = state.fiscalYears.slice().sort((a, b) => (a.start < b.start ? -1 : 1));
+    const fys = tlYears();
     if (!fys.length || !state.endDate) return null;
-    const cur0 = fyContaining(state.endDate) || fyContaining(state.startDate) || fys[fys.length - 1];
+    const cur0 = tlFyContaining(state.endDate) || tlFyContaining(state.startDate) || fys[fys.length - 1];
     const cur = fys.find((f) => f.start === cur0.start) || cur0;
-    const t0 = fyContaining(todayIso());
-    const tFy = t0 ? fys.find((f) => f.start === t0.start) : null;
+    const t0 = exerciseN();
+    const tFy = t0 ? fys.find((f) => f.start === t0.start && f.end === t0.end) : null;
     const ci = fys.indexOf(cur);
     const from = tFy && (cur === tFy || ci === fys.indexOf(tFy) + 1) ? tFy : cur;
     const to = fys[fys.indexOf(from) + 1] || from;
@@ -3173,7 +3242,7 @@
   }
   function timelineLabel(model, i) {
     const mo = model.months[i];
-    const fy = fyContaining(mo.end);
+    const fy = tlFyContaining(mo.end);
     const status = fy && mo.end === fy.end ? "fin d'exercice" : 'situation intermédiaire';
     return {
       date: isoToFrDate(mo.end),
@@ -3235,13 +3304,13 @@
     const model = timelineModel();
     if (!model || !model.months[i]) return;
     const end = model.months[i].end;
-    const fy = fyContaining(end);
+    const fy = tlFyContaining(end);
     if (!fy) return;
     state.startDate = fy.start;
     state.endDate = end;
     const key = fy.start + '|' + fy.end;
-    if (end === fy.end && key !== state.revisionFyKey) {
-      await selectFiscalYear(state.fiscalYears.indexOf(fy));
+    if (end === fy.end && key !== state.revisionFyKey && (exerciseFor(fy) || state.fiscalYears.some((f) => f.start === fy.start && f.end === fy.end))) {
+      await selectExercise(fy);
       return;
     }
     loadBalance();
@@ -3433,38 +3502,49 @@
 
   // Changement d'exercice : pilote le sélecteur natif « Exercice(s) » pour
   // obtenir le dossier_revision_id de cet exercice (jamais recalculé).
-  // (v4.3) À l'ouverture, la balance s'affiche sur l'exercice N (celui qui
-  // contient aujourd'hui) même si MyUnisoft propose un autre exercice
-  // (ex. N+1 déjà créé) : on pilote alors le sélecteur natif comme pour un
-  // changement d'exercice. Renvoie true si un changement a été lancé.
+  // (v4.4) À l'ouverture, la balance s'affiche sur l'exercice N tel que
+  // MyUnisoft le nomme (GET /exercices, libellé « N »), même si l'appli
+  // propose un autre exercice : on pilote alors le sélecteur natif par son
+  // libellé. Les exercices sont lus une fois en arrière-plan.
   function openOnCurrentExercise() {
-    const t = todayIso();
-    const i = state.fiscalYears.findIndex((f) => f.start <= t && t <= f.end);
-    if (i < 0) return false;
-    const f = state.fiscalYears[i];
-    if (state.startDate === f.start && state.endDate === f.end) return false;
-    const prev = { s: state.startDate, e: state.endDate };
-    selectFiscalYear(i).then((ok) => {
-      if (ok) return;
-      // sélecteur natif indisponible : on reste sur l'exercice proposé par MyUnisoft
-      state.startDate = prev.s;
-      state.endDate = prev.e;
-      state.error = null;
-      renderApp();
-      if (state.compareN1) loadN2();
+    loadExercises().then(() => {
+      const n = (state.exercises || []).find((x) => x.label === 'N');
+      if (!n || (state.startDate === n.start && state.endDate === n.end)) return;
+      const prev = { s: state.startDate, e: state.endDate };
+      selectExercise(n).then((ok) => {
+        if (ok) return;
+        // sélecteur natif indisponible : on reste sur l'exercice proposé par MyUnisoft
+        state.startDate = prev.s;
+        state.endDate = prev.e;
+        state.error = null;
+        renderApp();
+      });
     });
-    return true;
+    return false;
   }
 
   async function selectFiscalYear(idx) {
-    if (idx < 0 || !state.fiscalYears[idx]) return;
-    state.startDate = state.fiscalYears[idx].start;
-    state.endDate = state.fiscalYears[idx].end;
-    state.loading = true;
+    if (idx < 0 || !state.fiscalYears[idx]) return false;
+    return selectExercise(state.fiscalYears[idx]);
+  }
+  // (v4.4) Change d'exercice : l'identifiant d'exercice (dossier_revision_id)
+  // n'est jamais recalculé, il est relevé sur l'appel natif après avoir
+  // choisi l'exercice dans le sélecteur natif (par son libellé « N », « N+1 »…).
+  async function selectExercise(fy) {
+    if (!fy) return false;
+    state.startDate = fy.start;
+    state.endDate = fy.end;
     state.error = null;
+    if (fy.start + '|' + fy.end === state.revisionFyKey) {
+      loadBalance();
+      return true;
+    }
+    state.loading = true;
     renderApp();
     if (!titleBlockRef || !titleBlockRef.isConnected) titleBlockRef = findNativeTitleBlock();
-    const ok = await switchFiscalYear(idx);
+    const ex = exerciseFor(fy);
+    const idx = state.fiscalYears.findIndex((f) => f.start === fy.start && f.end === fy.end);
+    const ok = ex && ex.label ? await switchFiscalYear(-1, ex.label) : idx >= 0 ? await switchFiscalYear(idx) : false;
     if (!ok) {
       state.loading = false;
       state.error =
@@ -3518,7 +3598,11 @@
       });
 
     const fyEl = $('#tmb-fiscal-year');
-    if (fyEl) fyEl.addEventListener('change', () => selectFiscalYear(Number(fyEl.value)));
+    if (fyEl)
+      fyEl.addEventListener('change', () => {
+        const f = tlYears().find((x) => x.start + '|' + x.end === fyEl.value);
+        if (f) selectExercise(f);
+      });
 
     const bind = (id, key) => {
       const el = $(id);

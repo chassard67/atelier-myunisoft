@@ -1,8 +1,13 @@
 // ==UserScript==
 // @name         MyUnisoft - Grand livre à l'écran
 // @namespace    https://nicolas.chassard/myunisoft
-// @version      2.2-ext
-// @description  v2.2 (2026-11-13) : appels window.TMBC_GL (Consultation Premium) envoyés avec l'en-tête society-id du
+// @version      2.3-ext
+// @description  v2.3 (2026-11-13, retours de Nicolas) : (1) colonne PJ plus masquée (place réservée à la barre de
+//               défilement) et survol de l'icône = aperçu de la pièce (<lien GED>/preview) ; (2) cases d'options
+//               alignées à gauche (styles de l'appli neutralisés) ; (3) « Centraliser les comptes de tiers » grisé en
+//               Clients / Fournisseurs (et non envoyé) ; (4) ouverture toujours sur l'exercice N ; (5) Commentaire :
+//               retour à la ligne si le texte est long. Exercice N = libellé « N » de GET /exercices.
+//               v2.2 (2026-11-13) : appels window.TMBC_GL (Consultation Premium) envoyés avec l'en-tête society-id du
 //               dossier de l'onglet courant (l'en-tête relevé pouvait être celui d'un autre dossier ouvert : HTTP 400).
 //               v2.1 (2026-11-13, retours de Nicolas) : options de gauche à hauteur normale (les styles de l'appli
 //               étiraient les champs : hauteurs forcées) ; bandeau bleu sur sa propre ligne au-dessus du tableau ;
@@ -760,7 +765,8 @@
   function glpDefaultPeriod() {
     const today = new Date().toISOString().slice(0, 10);
     const ex = GLP.exercises;
-    let n = ex.find((e) => e.start <= today && today <= e.end);
+    // exercice N = celui que MyUnisoft étiquette « N » (exercices décalés : pas forcément celui d'aujourd'hui)
+    let n = ex.find((e) => e.label === 'N') || ex.find((e) => e.start <= today && today <= e.end);
     if (!n && ex.length) { const past = ex.filter((e) => e.start <= today); n = past.length ? past[past.length - 1] : ex[ex.length - 1]; }
     if (n) return { start: n.start, end: n.end };
     const y = new Date().getFullYear();
@@ -772,7 +778,7 @@
       attachment: String(!!GLP.attachment), comment_entry: String(!!GLP.commentEntry), comment_account: String(!!GLP.commentAccount),
       not_lettered_only: String(!!GLP.notLettered), not_solde_only: String(!!GLP.notSolde), an_simulation: 'false',
       subtype: String(GLP.subtype), analytic: 'false', echeance: 'false', exchange_rate: 'false',
-      centralize_account: String(!!GLP.centralize), account_number: GLP.range || '', xls: 'true',
+      centralize_account: String(!!GLP.centralize && GLP.subtype === 0), account_number: GLP.range || '', xls: 'true',
     };
   }
   async function glpLoad() {
@@ -838,7 +844,7 @@
     const out = [];
     let shown = 0, accounts = 0, truncated = false, gI = 0, gJ = 0;
     const extra = (l) => (showCom ? '<td class="com" title="' + esc(l[comL] || '') + '">' + esc(l[comL] || '') + '</td>' : '') +
-      (showPj ? '<td class="pj">' + (l[pjL] ? '<a href="' + esc(String(l[pjL])) + '" target="_blank" rel="noreferrer" title="Ouvrir la pièce jointe">' + PJ_SVG + '</a>' : '') + '</td>' : '');
+      (showPj ? '<td class="pj">' + (l[pjL] ? '<a href="' + esc(String(l[pjL])) + '" data-pjprev="' + esc(String(l[pjL])) + '" target="_blank" rel="noreferrer">' + PJ_SVG + '</a>' : '') + '</td>' : '');
     const extraEmpty = (showCom ? '<td></td>' : '') + (showPj ? '<td></td>' : '');
     for (const g of model.groups) {
       let base = g.lines;
@@ -900,7 +906,7 @@
     const keepScroll = scrollEl ? [scrollEl.scrollTop, scrollEl.scrollLeft] : null;
     const exOpts = GLP.exercises.map((e, i) => '<option value="' + i + '"' + (e.start === GLP.start && e.end === GLP.end ? ' selected' : '') + '>' + isoFr(e.start) + ' au ' + isoFr(e.end) + (e.label ? ' (' + esc(e.label) + ')' : '') + '</option>').join('');
     const exSel = GLP.exercises.some((e) => e.start === GLP.start && e.end === GLP.end);
-    const chk = (id, on, label) => '<label><input type="checkbox" data-opt="' + id + '"' + (on ? ' checked' : '') + '> ' + label + '</label>';
+    const chk = (id, on, label, off) => '<label' + (off ? ' class="off" title="Grand livre général uniquement"' : '') + '><input type="checkbox" data-opt="' + id + '"' + (on && !off ? ' checked' : '') + (off ? ' disabled' : '') + '> <span>' + label + '</span></label>';
     let body = '';
     let bar = '';
     if (GLP.loading) {
@@ -914,8 +920,8 @@
       const neg = (v) => '<b class="' + (v < 0 ? 'neg' : '') + '">' + fmtNum(v) + '</b>';
       bar = '<div class="glp-bar"><span>Affichage : <b>' + r.accounts + ' compte' + (r.accounts > 1 ? 's' : '') + '</b> · <b>' + r.shown + ' ligne' + (r.shown > 1 ? 's' : '') + '</b></span>' +
         (r.tot ? '<span>Débit ' + neg(r.tot.I) + '</span><span>Crédit ' + neg(r.tot.J) + '</span><span>Solde ' + neg(r2(r.tot.I - r.tot.J)) + '</span>' : '') + '</div>';
-      const cols = '<col style="width:92px"><col style="width:64px"><col style="width:112px"><col style="width:96px"><col style="width:70px"><col style="width:320px"><col style="width:124px"><col style="width:124px"><col style="width:128px">' + (r.showCom ? '<col style="width:230px">' : '') + (r.showPj ? '<col style="width:44px">' : '');
-      const W = 92 + 64 + 112 + 96 + 70 + 320 + 124 * 2 + 128 + (r.showCom ? 230 : 0) + (r.showPj ? 44 : 0);
+      const cols = '<col style="width:92px"><col style="width:64px"><col style="width:112px"><col style="width:96px"><col style="width:70px"><col style="width:320px"><col style="width:124px"><col style="width:124px"><col style="width:128px">' + (r.showCom ? '<col style="width:230px">' : '') + (r.showPj ? '<col style="width:52px">' : '');
+      const W = 92 + 64 + 112 + 96 + 70 + 320 + 124 * 2 + 128 + (r.showCom ? 230 : 0) + (r.showPj ? 52 : 0);
       body = '<div class="glp-table-wrap"><table style="width:' + W + 'px"><colgroup>' + cols + '</colgroup><thead><tr><th>Date</th><th>Journal</th><th>Pièce</th><th>Pièce 2</th><th>Lettrage</th><th>Intitulé</th><th class="n">Débit</th><th class="n">Crédit</th><th class="n">Solde</th>' +
         (r.showCom ? '<th>Commentaire</th>' : '') + (r.showPj ? '<th style="text-align:center!important">PJ</th>' : '') + '</tr></thead><tbody>' + r.html + '</tbody></table></div>';
     }
@@ -928,7 +934,7 @@
       '<div class="glp-lbl">Du</div><input type="date" data-in="start" value="' + GLP.start + '">' +
       '<div class="glp-lbl">Au</div><input type="date" data-in="end" value="' + GLP.end + '">' +
       (GLP.exercises.length ? '<div class="glp-lbl">Exercice</div><select data-in="ex">' + (exSel ? '' : '<option value="-1" selected>— personnalisé —</option>') + exOpts + '</select>' : '') +
-      '<div class="glp-grp">Écritures</div>' + chk('notLettered', GLP.notLettered, 'Écritures non lettrées uniquement') + chk('notSolde', GLP.notSolde, 'Comptes non soldés uniquement') + chk('centralize', GLP.centralize, 'Centraliser les comptes de tiers') +
+      '<div class="glp-grp">Écritures</div>' + chk('notLettered', GLP.notLettered, 'Écritures non lettrées uniquement') + chk('notSolde', GLP.notSolde, 'Comptes non soldés uniquement') + chk('centralize', GLP.centralize, 'Centraliser les comptes de tiers', GLP.subtype !== 0) +
       '<div class="glp-grp">Compléments</div>' + chk('attachment', GLP.attachment, 'Pièces jointes') + chk('commentAccount', GLP.commentAccount, 'Commentaires sur les comptes') + chk('commentEntry', GLP.commentEntry, 'Commentaires sur les lignes') +
       '<button type="button" class="glp-load" data-glp="load"' + (GLP.loading ? ' disabled' : '') + '>' + (GLP.loading ? 'Chargement…' : 'Actualiser') + '</button>' +
       '</aside><section class="glp-main">' +
@@ -939,7 +945,7 @@
     root.querySelector('[data-in="lett"]').value = GLP.lettMode;
     // (v2.1) en-tête (Imprimer / Export Excel / ✕), bandeau et outils limités à la largeur du tableau
     const tbl = root.querySelector('.glp-table-wrap table');
-    if (tbl) GLP.fitW = tbl.offsetWidth + 2;
+    if (tbl) GLP.fitW = tbl.offsetWidth + 2 + 18; // + barre de défilement verticale (sinon la colonne PJ passe dessous)
     if (GLP.fitW) {
       const w = Math.max(GLP.fitW, 760);
       root.querySelector('.glp-main').style.maxWidth = w + 'px';
@@ -1014,7 +1020,34 @@
     glpClose();
   }
 
+  let glpPjTimer = null;
+  function glpHidePj() {
+    clearTimeout(glpPjTimer);
+    const e = document.getElementById('glp-pjprev');
+    if (e) e.remove();
+  }
+  function glpShowPj(url) {
+    clearTimeout(glpPjTimer);
+    glpPjTimer = setTimeout(() => {
+      glpHidePj();
+      const root = document.getElementById(GLP_ID);
+      if (!root) return;
+      const r = root.getBoundingClientRect();
+      const box = document.createElement('div');
+      box.id = 'glp-pjprev';
+      const w = Math.round(Math.min(760, r.width * 0.5));
+      box.style.cssText = 'right:' + Math.round(window.innerWidth - r.right + 30) + 'px;top:' + Math.round(r.top + 60) + 'px;width:' + w + 'px;height:' + Math.round(r.height - 90) + 'px';
+      const img = document.createElement('img');
+      img.alt = '';
+      img.src = String(url) + '/preview?y=1400';
+      img.onerror = () => { box.innerHTML = '<div style="padding:10px;color:#5b6b85">Aperçu indisponible — clic pour ouvrir la pièce.</div>'; box.style.height = 'auto'; };
+      box.appendChild(img);
+      document.body.appendChild(box);
+    }, 180);
+  }
+
   function glpClose() {
+    glpHidePj();
     GLP.open = false;
     GLP.reqId++;
     const r = document.getElementById(GLP_ID);
@@ -1049,6 +1082,15 @@
       root.addEventListener('click', glpOnClick);
       root.addEventListener('change', glpOnChange);
       root.addEventListener('input', glpOnInput);
+      // (v2.3) survol de l'icône PJ : aperçu de la pièce (<lien GED>/preview, vérifié en direct)
+      root.addEventListener('mouseover', (ev) => {
+        const a = ev.target.closest && ev.target.closest('[data-pjprev]');
+        if (a) glpShowPj(a.dataset.pjprev);
+      });
+      root.addEventListener('mouseout', (ev) => {
+        const a = ev.target.closest && ev.target.closest('[data-pjprev]');
+        if (a && !(ev.relatedTarget && a.contains(ev.relatedTarget))) glpHidePj();
+      });
       document.body.appendChild(root);
     }
     root.style.display = 'flex';
@@ -1058,7 +1100,8 @@
     glpRender();
     if (!GLP.exercises.length) GLP.exercises = await glpLoadExercises();
     if (!GLP.open) return;
-    if (!GLP.start) { const p = glpDefaultPeriod(); GLP.start = p.start; GLP.end = p.end; }
+    // (v2.3) toujours l'exercice N (celui qui contient aujourd'hui) à l'ouverture
+    { const p = glpDefaultPeriod(); GLP.start = p.start; GLP.end = p.end; }
     glpLoad();
   }
 
@@ -1092,8 +1135,10 @@
     #${GLP_ID} .glp-seg button:last-child{border-right:0}
     #${GLP_ID} .glp-seg button.on{background:#0f2a52;color:#fff;font-weight:600}
     #${GLP_ID} .glp-grp{font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#0f2a52;margin:14px 0 4px;padding-bottom:4px;border-bottom:1px solid #e3e8f0}
-    #${GLP_ID} .glp-opts label{display:flex;align-items:flex-start;gap:7px;font-size:13px;line-height:1.3;cursor:pointer;margin:2px 0}
-    #${GLP_ID} .glp-opts label input{margin:2px 0 0;accent-color:#0f2a52}
+    #${GLP_ID} .glp-opts label{display:flex!important;justify-content:flex-start!important;align-items:flex-start!important;text-align:left!important;gap:7px;font-size:13px;line-height:1.3;cursor:pointer;margin:2px 0!important;padding:0!important;width:100%}
+    #${GLP_ID} .glp-opts label span{flex:1 1 auto;text-align:left!important}
+    #${GLP_ID} .glp-opts label input{flex:0 0 auto;width:auto!important;height:auto!important;margin:2px 0 0!important;accent-color:#0f2a52}
+    #${GLP_ID} .glp-opts label.off{opacity:.5;cursor:not-allowed}
     #${GLP_ID} .glp-load{margin-top:16px;border:0;border-radius:6px;background:#0f2a52;color:#fff;font-weight:600;padding:9px;cursor:pointer}
     #${GLP_ID} .glp-load[disabled]{opacity:.6}
     #${GLP_ID} .glp-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:10px;min-height:0}
@@ -1112,7 +1157,9 @@
     #${GLP_ID} td.m{font-family:${MONO}}
     #${GLP_ID} td.lett{color:#0f6b4a}
     #${GLP_ID} td.neg{color:#c62828}
-    #${GLP_ID} td.com{color:#3a4a63}
+    #${GLP_ID} td.com{color:#3a4a63;white-space:normal!important;overflow-wrap:anywhere;text-overflow:clip}
+    #glp-pjprev{position:fixed;z-index:1300;pointer-events:none;background:#fff;border:1px solid #8e9bb0;border-radius:6px;box-shadow:0 8px 26px rgba(15,42,82,.3);padding:8px}
+    #glp-pjprev img{display:block;max-width:100%;max-height:100%;object-fit:contain}
     #${GLP_ID} td.pj{text-align:center!important}
     #${GLP_ID} td.pj a{color:#1b4f9c}
     #${GLP_ID} tr.acc td{background:#e8eef8;color:#0f2a52;padding:7px 8px;border-top:1px solid #aebbd0;position:sticky;top:34px;z-index:1}

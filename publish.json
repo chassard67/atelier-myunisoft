@@ -2,13 +2,13 @@
   "minExtensionVersion": "1.1.0",
   "licenceRequired": true,
   "release": {
-    "version": "1.3.2",
+    "version": "1.3.3",
     "date": "2026-11-13",
     "notes": [
-      "Balance Premium : s'ouvre sur l'exercice N (même si N+1 existe) ; curseur sur N et N+1, séparés et étiquetés.",
-      "Balance Premium : colonnes déplaçables (glisser l'en-tête), bouton « tout déplier » en sous-totaux avec regroupements, case « tout sélectionner » sinon.",
-      "Balance Premium : Échap ne ferme plus la balance ; légende du bas retirée.",
-      "Consultation Premium : icône PJ et aperçu au survol rétablis pour les comptes fournisseurs / clients (le lien s'affichait à la place)."
+      "Balance Premium : l'exercice N est celui que MyUnisoft appelle « N » (exercices décalés, ex. 01/07-30/06, correctement gérés) ; la liste des exercices affiche N+1, N, N-1…",
+      "Balance Premium : le curseur montre N et N+1 même quand MyUnisoft ne propose pas N+1 dans la balance ; curseur sur la fin de N par défaut.",
+      "Balance Premium : colonnes PJ et Commentaire aussi en affichage mensuel / trimestriel (si Colonnes de révision est coché).",
+      "Grand Livre Premium : aperçu de la pièce jointe au survol, colonne PJ visible, cases alignées à gauche, « Centraliser les tiers » grisé en Clients / Fournisseurs, ouverture sur l'exercice N, commentaires sur plusieurs lignes."
     ]
   },
   "defaultMatches": [
