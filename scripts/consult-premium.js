@@ -1,8 +1,14 @@
 // ==UserScript==
 // @name         MyUnisoft - Consultation Premium (page de consultation de compte maison)
 // @namespace    https://nicolas.chassard/myunisoft
-// @version      2.18-ext
-// @description  v2.18 (2026-11-13, diagnostics de Nicolas lus) : PJ Permanent / PJ DR branchés sur les appels natifs
+// @version      2.19-ext
+// @description  v2.19 (2026-11-13, retours de Nicolas) : (1) commentaire de compte en cours de saisie : enregistré sur le
+//               compte qu'on quitte au changement de compte, jamais sur le nouveau ; (2) zone « Déposer une pièce » retirée
+//               (dépôt sur la ligne ou sur PJ Permanent / PJ DR) ; (3) surbrillance nette des boutons PJ pendant un
+//               glisser-déposer ; (4) re-clic sur la ligne active = désélection ; (5) survol de PJ Permanent / PJ DR :
+//               aperçu des pièces ; (6) n° de ligne centré ; (7) charte : bleu sur connect.lgassocies.com, noir sur
+//               app.myunisoft.fr.
+//               v2.18 (2026-11-13, diagnostics de Nicolas lus) : PJ Permanent / PJ DR branchés sur les appels natifs
 //               relevés : lecture GET /document/all_types (account + id du compte ; da_acc + idLDossierRevisionCompte),
 //               ajout POST /document/add_all_types (location=account&object_id=<id compte> ; location=da_acc&object_id=
 //               <id compte>&object_id2=<dossier_revision_id>) — clic = liste + « Ajouter une pièce… », ou glisser un
@@ -83,7 +89,16 @@
 // ==/UserScript==
 
 (function () {
-  'use strict';
+    'use strict';
+  // (2026-11-13) Charte du site : bleu sur connect.lgassocies.com, noir sur app.myunisoft.fr (variable CSS
+  // --tmbc-primary posée sur <html>, utilisée par Balance / Grand Livre / Consultation Premium).
+  (function setPremiumTheme() {
+    const black = /(^|\.)myunisoft\.fr$/i.test(location.hostname);
+    const r = document.documentElement;
+    if (!r) return;
+    r.style.setProperty('--tmbc-primary', black ? '#141414' : '#0f2a52');
+    r.style.setProperty('--tmbc-primary-hover', black ? '#3a3a3a' : '#1b3a6b');
+  })();
 
   const { isDisabled, registerScan, MONO_FONT_STACK } = window.TMBC;
   const MONO = MONO_FONT_STACK || 'Consolas, "Courier New", monospace';
@@ -848,7 +863,7 @@
     if (document.getElementById(BACK_ID)) return;
     const b = document.createElement('button');
     b.id = BACK_ID; b.type = 'button'; b.textContent = '↩ Consultation Premium';
-    b.style.cssText = 'position:fixed;top:10px;left:50%;transform:translateX(-50%);z-index:2147483600;padding:6px 16px;border:1px solid #0f2a52;background:#0f2a52;color:#fff;border-radius:16px;cursor:pointer;font-size:13px';
+    b.style.cssText = 'position:fixed;top:10px;left:50%;transform:translateX(-50%);z-index:2147483600;padding:6px 16px;border:1px solid var(--tmbc-primary,#0f2a52);background:var(--tmbc-primary,#0f2a52);color:#fff;border-radius:16px;cursor:pointer;font-size:13px';
     b.addEventListener('click', () => { const pp = document.getElementById(PANEL_ID); if (pp) pp.style.display = 'flex'; b.remove(); });
     document.body.appendChild(b);
   }
@@ -1135,7 +1150,7 @@
     const m = document.createElement('div');
     m.id = 'tmbc-cp-ctx';
     m.style.cssText = 'position:fixed;z-index:1260;min-width:230px;background:#fff;border:1px solid #8e9bb0;border-radius:6px;box-shadow:0 8px 24px rgba(15,42,82,.3);padding:4px 0;font-size:13px;left:' + Math.min(window.innerWidth - 260, ev.clientX) + 'px;top:' + Math.min(window.innerHeight - 160, ev.clientY) + 'px';
-    const item = (label, fn, danger) => { const d = document.createElement('div'); d.textContent = label; d.style.cssText = 'padding:7px 14px;cursor:pointer;white-space:nowrap;max-width:420px;overflow:hidden;text-overflow:ellipsis;color:' + (danger ? '#c62828' : '#0f2a52'); d.onmouseenter = () => (d.style.background = '#e4ecfa'); d.onmouseleave = () => (d.style.background = ''); d.onclick = () => { closePjMenu(); fn(); }; m.appendChild(d); };
+    const item = (label, fn, danger) => { const d = document.createElement('div'); d.textContent = label; d.style.cssText = 'padding:7px 14px;cursor:pointer;white-space:nowrap;max-width:420px;overflow:hidden;text-overflow:ellipsis;color:' + (danger ? '#c62828' : 'var(--tmbc-primary,#0f2a52)'); d.onmouseenter = () => (d.style.background = '#e4ecfa'); d.onmouseleave = () => (d.style.background = ''); d.onclick = () => { closePjMenu(); fn(); }; m.appendChild(d); };
     item('Ajouter une pièce…', () => attachPiece(l));
     document.body.appendChild(m);
     document.addEventListener('mousedown', pjMenuOut, true);
@@ -1341,6 +1356,36 @@
     inp.addEventListener('change', () => { const f = inp.files && inp.files[0]; inp.remove(); if (f) uploadAccPj(kind, f); });
     inp.click();
   }
+  // (v2.19) survol de PJ Permanent / PJ DR : aperçu des pièces à droite du curseur
+  let accPjTimer = null;
+  function showAccPjPreview(kind) {
+    clearTimeout(accPjTimer);
+    accPjTimer = setTimeout(async () => {
+      const pj = S.accPj && S.accPj.num === S.acc ? S.accPj : null;
+      if (!pj || !pj.accId) return;
+      const id = kind === 'perm' ? pj.accId : pj.d && pj.d.idLDossierRevisionCompte;
+      if (!id) return;
+      let docs = [];
+      try { docs = await loadAccDocs(kind === 'perm' ? 'account' : 'da_acc', id); } catch (e) { return; }
+      hidePjPreview();
+      if (!docs.length) return;
+      const p = document.getElementById(PANEL_ID);
+      if (!p) return;
+      const pr = p.getBoundingClientRect();
+      const box = document.createElement('div');
+      box.id = 'tmbc-cp-pjprev';
+      const mx = lastMouse.x || pr.left + 200, my = lastMouse.y || pr.top + 100;
+      const bw = Math.round(Math.min(760, Math.max(420, pr.width * 0.45)));
+      const bh = Math.round(Math.min(window.innerHeight - 40, Math.max(420, pr.height - 90)));
+      let bl = mx + 24;
+      if (bl + bw > window.innerWidth - 10) bl = Math.max(10, mx - 24 - bw);
+      const bt = Math.max(10, Math.min(my - 60, window.innerHeight - bh - 10));
+      box.style.cssText = 'position:fixed;z-index:1200;pointer-events:none;background:#fff;border:1px solid #8e9bb0;border-radius:6px;box-shadow:0 8px 26px rgba(15,42,82,.3);padding:10px;overflow:auto;display:flex;flex-direction:column;gap:10px;left:' + Math.round(bl) + 'px;top:' + Math.round(bt) + 'px;width:' + bw + 'px;height:' + bh + 'px';
+      box.innerHTML = '<b style="color:var(--tmbc-primary,#0f2a52)">' + (kind === 'perm' ? 'PJ Permanent' : 'PJ DR') + ' — ' + docs.length + ' pièce' + (docs.length > 1 ? 's' : '') + '</b>' +
+        docs.map((d) => '<div style="display:flex;flex-direction:column;gap:6px;flex:1;min-height:0">' + (d.big ? '<img src="' + esc(d.big) + '" alt="" style="max-width:100%;max-height:100%;object-fit:contain;border:1px solid #ddd">' : '') + '<b style="word-break:break-all;font-weight:600">' + esc(d.name) + '</b></div>').join('');
+      document.body.appendChild(box);
+    }, 250);
+  }
   async function showAccPjList(kind, anchor) {
     const pj = S.accPj && S.accPj.num === S.acc ? S.accPj : null;
     if (!pj || !pj.accId) return;
@@ -1354,7 +1399,7 @@
     const m = document.createElement('div');
     m.id = 'tmbc-cp-ctx';
     m.style.cssText = 'position:fixed;z-index:1260;min-width:260px;max-width:460px;background:#fff;border:1px solid #8e9bb0;border-radius:6px;box-shadow:0 8px 24px rgba(15,42,82,.3);padding:4px 0;font-size:13px;left:' + Math.max(10, Math.min(window.innerWidth - 470, r.left)) + 'px;top:' + Math.round(r.bottom + 4) + 'px';
-    m.innerHTML = '<div data-add style="padding:7px 14px;cursor:pointer;color:#0f2a52;font-weight:600;border-bottom:1px solid #e3e8f0">Ajouter une pièce…</div>' + (docs.length
+    m.innerHTML = '<div data-add style="padding:7px 14px;cursor:pointer;color:var(--tmbc-primary,#0f2a52);font-weight:600;border-bottom:1px solid #e3e8f0">Ajouter une pièce…</div>' + (docs.length
       ? docs.map((x, i) => '<div data-i="' + i + '" style="padding:7px 14px;cursor:pointer;color:#1b4f9c;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(x.name) + '</div>').join('')
       : '<div style="padding:8px 14px;color:#5b6b85">Aucune pièce.</div>');
     m.addEventListener('click', (ev) => { if (ev.target.closest('[data-add]')) { closePjMenu(); pickAccPj(kind); return; } const it = ev.target.closest('[data-i]'); if (!it) return; const x = docs[+it.dataset.i]; closePjMenu(); if (x && (x.link || x.big)) window.open(x.link || x.big, 'tmb-pj-window', 'width=1000,height=900,resizable=yes,scrollbars=yes'); });
@@ -1403,7 +1448,7 @@
     box.innerHTML = '<div style="display:flex;justify-content:space-between;align-items:center"><b>Commentaires – écriture ' + l.entryId + '</b><button data-x type="button" aria-label="Fermer" style="border:0;background:transparent;font-size:16px;cursor:pointer">✕</button></div>' +
       '<div data-list style="max-height:180px;overflow:auto;display:flex;flex-direction:column;gap:6px;color:#5b6b85">Chargement…</div>' +
       '<textarea data-t rows="3" placeholder="Nouveau commentaire (Ctrl+Entrée pour enregistrer)" style="border:1px solid #b8c2cf;border-radius:6px;padding:7px 9px;font:13px inherit;resize:vertical"></textarea>' +
-      '<div style="display:flex;gap:8px;justify-content:flex-end"><button data-s type="button" style="border:0;background:#0f2a52;color:#fff;border-radius:6px;padding:7px 14px;cursor:pointer;font-weight:600">Enregistrer</button></div>';
+      '<div style="display:flex;gap:8px;justify-content:flex-end"><button data-s type="button" style="border:0;background:var(--tmbc-primary,#0f2a52);color:#fff;border-radius:6px;padding:7px 14px;cursor:pointer;font-weight:600">Enregistrer</button></div>';
     document.body.appendChild(box);
     const list = box.querySelector('[data-list]');
     const ta = box.querySelector('[data-t]');
@@ -1444,7 +1489,7 @@
         } else {
           const cur = htmlToText(((await getJson('/comments?entry_id=' + l.entryId)).find((c) => String(c.id) === cid) || {}).body);
           const holder = row.querySelector('div');
-          holder.innerHTML = '<textarea data-et rows="3" style="width:100%;box-sizing:border-box;border:1px solid #b8c2cf;border-radius:6px;padding:6px 8px;font:13px inherit"></textarea><div style="margin-top:4px;display:flex;gap:6px;justify-content:flex-end"><button data-eok type="button" style="border:0;background:#0f2a52;color:#fff;border-radius:6px;padding:5px 12px;cursor:pointer">Valider</button><button data-eno type="button" style="border:1px solid #b8c2cf;background:#fff;border-radius:6px;padding:5px 12px;cursor:pointer">Annuler</button></div>';
+          holder.innerHTML = '<textarea data-et rows="3" style="width:100%;box-sizing:border-box;border:1px solid #b8c2cf;border-radius:6px;padding:6px 8px;font:13px inherit"></textarea><div style="margin-top:4px;display:flex;gap:6px;justify-content:flex-end"><button data-eok type="button" style="border:0;background:var(--tmbc-primary,#0f2a52);color:#fff;border-radius:6px;padding:5px 12px;cursor:pointer">Valider</button><button data-eno type="button" style="border:1px solid #b8c2cf;background:#fff;border-radius:6px;padding:5px 12px;cursor:pointer">Annuler</button></div>';
           const et = holder.querySelector('[data-et]'); et.value = cur; et.focus();
           holder.querySelector('[data-eno]').addEventListener('click', () => reload().catch(() => {}));
           holder.querySelector('[data-eok]').addEventListener('click', async () => {
@@ -1522,7 +1567,7 @@
     w.document.write(
       '<!doctype html><html><head><meta charset="utf-8"><title>' + esc2(title) + '</title><style>' +
         'body{font-family:"Segoe UI",Arial,sans-serif;font-size:10px;color:#1c2b44;margin:12mm}' +
-        'h1{font-size:15px;margin:0 0 2px;color:#0f2a52}.info{color:#5b6b85;margin:0 0 8px}' +
+        'h1{font-size:15px;margin:0 0 2px;color:var(--tmbc-primary,#0f2a52)}.info{color:#5b6b85;margin:0 0 8px}' +
         'table{border-collapse:collapse;width:auto;table-layout:auto}th,td{border:1px solid #c3cddd;padding:2px 5px;white-space:nowrap;position:static!important;background:none}' +
         'th{background:#f3f6fb;text-align:left}td.n,td[style*="right"]{text-align:right;font-family:Consolas,monospace}' +
         '.neg,.tmb-negative,td.neg,td.cr{color:#c62828}tr.acc td,tr.tot td,tr.sub td,.tmb-subtotal-row td,tr.gt td{font-weight:700;background:#eef2f8}' +
@@ -1550,7 +1595,7 @@
     p.style.cssText = 'position:fixed;left:160px;top:58px;right:0;bottom:0;z-index:1195;background:#eef1f6;display:flex;flex-direction:column;font-family:"Segoe UI",system-ui,sans-serif;font-size:13px;color:#1c2b44;min-width:0;overflow:auto';
     const inp = 'border:1px solid #b8c2cf;border-radius:6px;padding:7px 9px;font-size:13px;background:#fff;box-sizing:border-box';
     const lbl = 'font-size:11px;color:#5b6b85';
-    const btn = 'border:1px solid #b8c2cf;background:#fff;color:#0f2a52;border-radius:6px;padding:8px 14px;font-size:13px;cursor:pointer';
+    const btn = 'border:1px solid #b8c2cf;background:#fff;color:var(--tmbc-primary,#0f2a52);border-radius:6px;padding:8px 14px;font-size:13px;cursor:pointer';
     const headParts = () => ({
       cg: COLS.map((c) => '<col style="width:' + c.w + 'px">').join(''),
       h1: COLS.map((c) => c.k === 'chk' ? '<th class="h" style="text-align:right;padding-right:9px"><input data-all type="checkbox" aria-label="Tout sélectionner"></th>' : '<th class="h' + (c.sort ? ' s' : '') + (c.num ? ' n' : '') + '" data-col="' + c.k + '"' + (c.sort ? ' data-sort="' + c.sort + '"' : '') + '>' + c.t + ' <span data-arrow="' + (c.sort || '') + '"></span><span class="rz" data-rz="' + c.k + '"></span></th>').join(''),
@@ -1571,8 +1616,8 @@
     p.innerHTML =
       '<style>' +
       '#' + PANEL_ID + ' table{border-collapse:separate;border-spacing:0;table-layout:fixed}' +
-      '#' + PANEL_ID + ' thead th.h{position:sticky;top:0;z-index:2;background:#f3f6fb;color:#0f2a52;font-weight:600;font-size:12px;height:34px;padding:0 6px;text-align:left;border-bottom:1px solid #aebbd0;border-right:1px solid #c3cddd;white-space:nowrap;cursor:default}' +
-      '#' + PANEL_ID + ' thead th.h{position:sticky}#' + PANEL_ID + ' .rz{position:absolute;top:0;right:-3px;width:7px;height:100%;cursor:col-resize;z-index:5}#' + PANEL_ID + ' .rz:hover{background:#6a9be0}#' + PANEL_ID + ' tr.sub td{background:#e8eef8;color:#0f2a52;font-weight:700;border-top:1px solid #8aa0c4}#' + PANEL_ID + ' thead th.s{cursor:pointer}#' + PANEL_ID + ' thead th.s:hover{background:#e4ecfa}' +
+      '#' + PANEL_ID + ' thead th.h{position:sticky;top:0;z-index:2;background:#f3f6fb;color:var(--tmbc-primary,#0f2a52);font-weight:600;font-size:12px;height:34px;padding:0 6px;text-align:left;border-bottom:1px solid #aebbd0;border-right:1px solid #c3cddd;white-space:nowrap;cursor:default}' +
+      '#' + PANEL_ID + ' thead th.h{position:sticky}#' + PANEL_ID + ' .rz{position:absolute;top:0;right:-3px;width:7px;height:100%;cursor:col-resize;z-index:5}#' + PANEL_ID + ' .rz:hover{background:#6a9be0}#' + PANEL_ID + ' tr.sub td{background:#e8eef8;color:var(--tmbc-primary,#0f2a52);font-weight:700;border-top:1px solid #8aa0c4}#' + PANEL_ID + ' thead th.s{cursor:pointer}#' + PANEL_ID + ' thead th.s:hover{background:#e4ecfa}' +
       '#' + PANEL_ID + ' thead th.n{text-align:right}' +
       '#' + PANEL_ID + ' thead th.dragover{box-shadow:inset 3px 0 0 #1b4f9c}#' + PANEL_ID + ' thead th[data-col]{cursor:grab}' +
       '#' + PANEL_ID + ' td{padding:5px 6px;border-bottom:1px solid #c3cddd;border-right:1px solid #c3cddd;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:left}' +
@@ -1582,19 +1627,19 @@
       '#' + PANEL_ID + ' td.neg{color:#c62828}#' + PANEL_ID + ' td.cr{color:#c62828}' +
       '#' + PANEL_ID + ' td.m{font-family:' + MONO + '}' +
       '#' + PANEL_ID + ' tbody tr{background:#fff}#' + PANEL_ID + ' tbody tr:nth-child(even){background:#f8fafd}' +
-      '#' + PANEL_ID + ' tbody tr.tot td{background:#b4c6e7;font-weight:700;color:#0f2a52;border-top:2px solid #0f2a52}#' + PANEL_ID + ' tbody tr.tot2 td{background:#dbe5f5;color:#0f2a52}#' + PANEL_ID + ' tbody tr.tot3 td{background:#fff0b3;color:#0f2a52;font-weight:700}' +
+      '#' + PANEL_ID + ' tbody tr.tot td{background:#b4c6e7;font-weight:700;color:var(--tmbc-primary,#0f2a52);border-top:2px solid var(--tmbc-primary,#0f2a52)}#' + PANEL_ID + ' tbody tr.tot2 td{background:#dbe5f5;color:var(--tmbc-primary,#0f2a52)}#' + PANEL_ID + ' tbody tr.tot3 td{background:#fff0b3;color:var(--tmbc-primary,#0f2a52);font-weight:700}' +
       '#' + PANEL_ID + ' tbody tr.sel{background:#fff4cc}#' + PANEL_ID + ' tbody tr.act{background:#dbe8fb!important}' +
       '#' + PANEL_ID + ' input:focus,#' + PANEL_ID + ' select:focus{outline:2px solid #6a9be0;outline-offset:0}' +
-      '#' + PANEL_ID + ' .cp-accpj.over{background:#e4ecfa;border-color:#1b4f9c}#' + PANEL_ID + ' .cp-accpj[data-state=off]{opacity:.45;cursor:not-allowed}#' + PANEL_ID + ' .cp-accpj b{font-family:' + MONO + ';margin-left:4px}' +
+      '#' + PANEL_ID + ' .cp-accpj.over{background:#cfe0fa!important;border:2px solid #1b4f9c!important;box-shadow:0 0 0 3px rgba(27,79,156,.25)}#' + PANEL_ID + ' .cp-accpj[data-state=off]{opacity:.45;cursor:not-allowed}#' + PANEL_ID + ' .cp-accpj b{font-family:' + MONO + ';margin-left:4px}' +
       '#' + PANEL_ID + ' [data-dropzone].over{background:#e4ecfa;border-color:#1b4f9c}#' + PANEL_ID + ' tbody tr.dropover td{background:#dbe8fb!important;box-shadow:inset 0 2px 0 #1b4f9c,inset 0 -2px 0 #1b4f9c}' +
       '</style>' +
       // en-tête
       '<div data-head style="display:flex;align-items:center;gap:14px;padding:12px 20px 6px;flex-wrap:wrap;box-sizing:border-box;max-width:100%;min-width:min(100%,760px)">' +
-      '<b style="font-size:20px;color:#0f2a52;font-weight:600">Consultation Premium</b>' +
-      '<span style="background:#0f2a52;color:#fff;font-size:10px;font-weight:700;letter-spacing:.08em;padding:4px 10px;border-radius:999px">PREMIUM</span>' +
+      '<b style="font-size:20px;color:var(--tmbc-primary,#0f2a52);font-weight:600">Consultation Premium</b>' +
+      '<span style="background:var(--tmbc-primary,#0f2a52);color:#fff;font-size:10px;font-weight:700;letter-spacing:.08em;padding:4px 10px;border-radius:999px">PREMIUM</span>' +
       '<span data-info style="color:#5b6b85"></span><div style="flex:1"></div>' +
       '<button data-act="print" type="button" style="' + btn + '">Imprimer</button>' +
-      '<button data-act="xlsx" type="button" style="' + btn + ';background:#0f2a52;color:#fff;border-color:#0f2a52;font-weight:600">Export Excel</button>' +
+      '<button data-act="xlsx" type="button" style="' + btn + ';background:var(--tmbc-primary,#0f2a52);color:#fff;border-color:var(--tmbc-primary,#0f2a52);font-weight:600">Export Excel</button>' +
       '<button data-act="close" type="button" aria-label="Fermer" style="' + btn + ';width:36px;padding:8px 0">✕</button></div>' +
       // sélection
       // (v2.14) champs à gauche sur 2 lignes, commentaires (annuel puis permanent) dans une colonne à droite :
@@ -1629,13 +1674,12 @@
       '<div style="display:flex;flex-direction:column;gap:3px"><span style="' + lbl + '">Commentaire permanent</span><input data-acomp type="text" autocomplete="off" style="' + inp + ';width:100%;background:#fff"></div></div>' +
       // (v2.17) pièces jointes : dépôt sur l'écriture sélectionnée + PJ Permanent / PJ DR du compte
       '<div data-accpj style="display:flex;flex-direction:column;gap:6px;flex:0 0 250px">' +
-      '<div data-dropzone title="Glisse un fichier ici pour le joindre à l\'écriture sélectionnée (ou dépose-le directement sur une ligne du tableau)" style="border:2px dashed #9db4d8;border-radius:6px;padding:8px 10px;font-size:12px;color:#1b4f9c;text-align:center;line-height:1.35">Déposer une pièce sur l\'écriture sélectionnée<br><span style="color:#5b6b85">(ou directement sur une ligne)</span></div>' +
       '<div style="display:flex;gap:6px">' +
-      '<button type="button" data-pjk="perm" data-state="off" class="cp-accpj" style="' + btn + ';flex:1;padding:6px 8px">PJ Permanent <b>—</b></button>' +
-      '<button type="button" data-pjk="dr" data-state="off" class="cp-accpj" style="' + btn + ';flex:1;padding:6px 8px">PJ DR <b>—</b></button></div></div>' +
+      '<button type="button" data-pjk="perm" data-state="off" class="cp-accpj" title="Pièces permanentes du compte" style="' + btn + ';flex:1;padding:6px 8px">PJ Permanent <b>—</b></button>' +
+      '<button type="button" data-pjk="dr" data-state="off" class="cp-accpj" title="Pièces du dossier de révision" style="' + btn + ';flex:1;padding:6px 8px">PJ DR <b>—</b></button></div></div>' +
       '</div>' +
       // soldes
-      '<div style="display:flex;gap:12px;padding:10px 20px 8px;flex-wrap:wrap"><div data-bar style="flex:0 1 auto;max-width:100%;box-sizing:border-box;background:#0f2a52;color:#fff;border-radius:8px;padding:9px 14px;display:flex;gap:24px;align-items:center;justify-content:space-between;flex-wrap:wrap">' +
+      '<div style="display:flex;gap:12px;padding:10px 20px 8px;flex-wrap:wrap"><div data-bar style="flex:0 1 auto;max-width:100%;box-sizing:border-box;background:var(--tmbc-primary,#0f2a52);color:#fff;border-radius:8px;padding:9px 14px;display:flex;gap:24px;align-items:center;justify-content:space-between;flex-wrap:wrap">' +
       '<div style="font-size:12px;opacity:.9">Affichage : <b data-cnt style="font-weight:600"></b></div>' +
       '<div style="display:flex;gap:22px;font-family:' + MONO + ';font-size:15px"><span style="text-align:right">Débit <b data-td></b></span><span style="text-align:right">Crédit <b data-tc></b></span><span style="text-align:right">Solde <b data-ts></b></span></div></div></div>' +
       // tableau
@@ -1681,7 +1725,7 @@
         else if (act === 'monthly') {
           S.monthly = ((S.monthly || 0) + 1) % 3;
           if (S.monthly && S.sortK !== 'date') { S.sortK = 'date'; S.sortD = 1; }
-          a.style.background = S.monthly ? '#0f2a52' : '#fff'; a.style.color = S.monthly ? '#fff' : '#0f2a52';
+          a.style.background = S.monthly ? 'var(--tmbc-primary,#0f2a52)' : '#fff'; a.style.color = S.monthly ? '#fff' : 'var(--tmbc-primary,#0f2a52)';
           a.textContent = S.monthly === 1 ? 'Sous-totaux + détail' : S.monthly === 2 ? 'Sous-totaux seuls' : 'Sous-total mensuel';
           render();
         }
@@ -1702,6 +1746,12 @@
       const tr = ev.target.closest('tr[data-id]');
       if (!tr || ev.target.matches('input')) return;
       const id = +tr.dataset.id;
+      // (v2.19) re-clic sur la ligne active = désélection
+      if (S.active === id && ev.detail === 1 && !ev.target.closest('[data-pj],[data-com],[data-cp],a')) {
+        tr.classList.remove('act');
+        S.active = 0;
+        return;
+      }
       const old = p.querySelector('tr.act');
       if (old && old !== tr) old.classList.remove('act');
       tr.classList.add('act');
@@ -1808,6 +1858,8 @@
       uploadToEntry(l, f);
     });
     p.addEventListener('mouseover', (ev) => {
+      const ab = ev.target.closest('.cp-accpj[data-state=on]');
+      if (ab) { if (!(ev.relatedTarget && ab.contains(ev.relatedTarget))) showAccPjPreview(ab.dataset.pjk); return; }
       const cc = ev.target.closest('[data-cp]');
       if (cc) { const tr0 = cc.closest('tr[data-id]'); const l0 = tr0 && S.lines.find((x) => x.id === +tr0.dataset.id); if (l0) showCpPop(l0, cc.dataset.cp, cc); return; }
       const c = ev.target.closest('[data-pj]');
@@ -1818,6 +1870,8 @@
       if (l) showPjPreview(l);
     });
     p.addEventListener('mouseout', (ev) => {
+      const ab = ev.target.closest && ev.target.closest('.cp-accpj');
+      if (ab && !(ev.relatedTarget && ab.contains(ev.relatedTarget))) { clearTimeout(accPjTimer); hidePjPreview(); return; }
       if (ev.target.closest && ev.target.closest('[data-cp]')) { scheduleHideCpPop(); return; }
       const c = ev.target.closest('[data-pj]');
       if (c && !(ev.relatedTarget && c.contains(ev.relatedTarget))) { clearTimeout(pjTimer); hidePjPreview(); }
@@ -1834,7 +1888,9 @@
     [['[data-acomp]', 'perm'], ['[data-acoma]', 'ann']].forEach(([sel, kind]) => {
       const el = p.querySelector(sel);
       el.addEventListener('keydown', (ev) => { ev.stopPropagation(); if (ev.key === 'Enter') { saveAccCom(kind, el); el.blur(); } else if (ev.key === 'Escape') { el.value = (S.accCom && S.accCom[kind] ? S.accCom[kind].text : ''); el.blur(); } });
-      el.addEventListener('blur', () => saveAccCom(kind, el));
+      el.addEventListener('blur', () => { if (!el.__skipBlurSave) saveAccCom(kind, el); });
+      // (v2.19) compte « propriétaire » du texte en cours de saisie : jamais enregistré sur un autre compte
+      el.addEventListener('focus', () => { el.dataset.owner = S.acc; });
     });
     p.addEventListener('input', (ev) => {
       const t = ev.target;
@@ -2084,7 +2140,8 @@
   async function saveAccCom2(kind, el) {
     const txt = el.value.trim();
     const c = S.accCom;
-    if (!c || c.num !== S.acc) return;
+    const owner = el.dataset.owner || S.acc;
+    if (!c || c.num !== owner || owner !== S.acc) return;
     const cur = c[kind] ? c[kind].text : '';
     const curId = c[kind] ? c[kind].id : null;
     if (txt === cur) return;
@@ -2185,6 +2242,15 @@
 
   async function selectAccount(num, opts) {
     if (!num) return;
+    // (v2.19) commentaire de compte en cours de saisie : enregistré sur le compte qu'on quitte
+    const ae = document.activeElement;
+    if (ae && ae.matches && ae.matches('#' + PANEL_ID + ' [data-acomp], #' + PANEL_ID + ' [data-acoma]')) {
+      const kind = ae.matches('[data-acomp]') ? 'perm' : 'ann';
+      ae.__skipBlurSave = true;
+      try { await saveAccCom(kind, ae); } catch (e) { /* ignore */ }
+      ae.blur();
+      ae.__skipBlurSave = false;
+    }
     const prevAcc = S.acc;
     setBusy(true, 'Chargement du compte ' + num + '…');
     try {
@@ -2283,7 +2349,7 @@
   const txt = (v) => { const t = String(v == null ? '' : v); return esc(t) + (/^[\d\s.,]+$/.test(t.trim()) && t.trim() ? '\u2060' : ''); };
   function cellFor(k, l, on) {
     switch (k) {
-      case 'chk': return '<td style="text-align:right;padding:5px 9px 5px 2px"><span class="m" style="color:#9aa6b8;font-size:11px;margin-right:7px;vertical-align:middle">' + (l.__no || '') + '</span><input type="checkbox" aria-label="Sélectionner" style="vertical-align:middle;margin:0"' + (on ? ' checked' : '') + '></td>';
+      case 'chk': return '<td style="padding:5px 9px 5px 2px"><div style="display:flex;align-items:center"><span class="m" style="flex:1;text-align:center;color:#9aa6b8;font-size:11px">' + (l.__no || '') + '</span><input type="checkbox" aria-label="Sélectionner" style="margin:0;flex:0 0 auto"' + (on ? ' checked' : '') + '></div></td>';
       case 'date': return '<td class="m">' + esc(l.dateTxt) + '</td>';
       case 'jnl': return '<td>' + txt(l.jnl) + '</td>';
       case 'lett': return '<td class="m" style="color:#0f6b4a">' + txt(l.lett) + '</td>';

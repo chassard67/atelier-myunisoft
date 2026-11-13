@@ -43,3 +43,6 @@ label.feature { display: flex; align-items: center; gap: 8px; padding: 5px 0; bo
 label.feature .name { flex: 1; }
 label.feature input:disabled + span { opacity: .55; cursor: default; }
 section#licence-box { background: #f9fafb; }
+
+.top-actions { padding: 10px 14px 4px; flex-wrap: wrap; }
+.top-actions button { flex: 1 1 auto; }
