@@ -135,15 +135,15 @@ async function checkLicence(base, cfg, manifest) {
   if (!key) return { status: 'missing' };
   const hash = await sha256Hex(key);
   try {
-    const data = JSON.parse(await fetchText(base + 'licences.json'));
-    const hit = (data.licences || []).find((l) => l.hash === hash);
-    if (!hit) return { status: 'unknown', checkedAt: Date.now() };
-    return {
-      status: hit.status === 'active' ? 'active' : 'blocked',
-      client: hit.client || '',
-      checkedAt: Date.now(),
-      validatedAt: hit.status === 'active' ? Date.now() : prev.validatedAt,
-    };
+    const data = JSON.parse(await fetchText(base + 'licence?h=' + hash));
+    const st = data && data.status;
+    if (st === 'active') {
+      return { status: 'active', client: data.client || '', checkedAt: Date.now(), validatedAt: Date.now() };
+    }
+    if (st === 'expired' || st === 'blocked') {
+      return { status: st, client: data.client || '', checkedAt: Date.now() };
+    }
+    return { status: 'unknown', checkedAt: Date.now() };
   } catch (e) {
     // Serveur injoignable : on garde le dernier état connu, avec un délai de grâce.
     if (prev.status === 'active' && prev.keyHash === hash) {
@@ -177,16 +177,18 @@ async function addNotice(notice) {
 // Deux nouvelles tentatives (3 s puis 10 s) en cas d'échec réseau ou de
 // réponse serveur en erreur : pendant une republication GitHub Pages, le
 // serveur renvoie brièvement des erreurs (vu en direct : « Failed to fetch »).
-async function fetchText(url) {
+async function fetchText(url, headers) {
   const sep = url.includes('?') ? '&' : '?';
   let lastErr;
   for (const wait of [0, 3000, 10000]) {
     if (wait) await new Promise((r) => setTimeout(r, wait));
     try {
-      const res = await fetch(url + sep + 't=' + Date.now(), { cache: 'no-store' });
+      const res = await fetch(url + sep + 't=' + Date.now(), { cache: 'no-store', headers: headers || undefined });
       if (res.ok) return res.text();
       lastErr = new Error(`HTTP ${res.status} sur ${url}`);
-      if (res.status === 404 && !/manifest\.json|licences\.json/.test(url)) break;
+      // 403 = licence refusée côté serveur ; inutile de réessayer.
+      if (res.status === 403) break;
+      if (res.status === 404 && !/manifest\.json|\/licence/.test(url)) break;
     } catch (e) {
       lastErr = new Error(`${e.message} (${url.replace(/\?.*$/, '')})`);
     }
@@ -223,7 +225,9 @@ async function doCheckForUpdates(reason) {
   const cfg = await getConfig();
   const base = cfg.baseUrl.endsWith('/') ? cfg.baseUrl : cfg.baseUrl + '/';
   const state = await getState();
+  const keyHash = cfg.licenceKey ? await sha256Hex(normalizeKey(cfg.licenceKey)) : null;
   let manifest = state.manifest || null;
+  let licence = null;
   let changed = false;
   let error = null;
   try {
@@ -231,42 +235,51 @@ async function doCheckForUpdates(reason) {
     if (!manifest || !Array.isArray(manifest.scripts) || !manifest.runtime) {
       throw new Error('manifest.json invalide');
     }
-    // Télécharge uniquement ce qui a changé, vérifie chaque fichier AVANT de
-    // remplacer quoi que ce soit : en cas d'erreur, l'ancienne version reste.
-    const toStore = {};
-    for (const item of [manifest.runtime, ...manifest.scripts]) {
-      const cached = await getCachedCode(item.file);
-      if (cached && cached.sha256 === item.sha256) continue;
-      const code = await fetchText(base + item.file);
-      const hash = await sha256Hex(code);
-      if (hash !== item.sha256) {
-        throw new Error(`Empreinte incorrecte pour ${item.file} (cache du serveur pas encore à jour ? réessayer dans quelques minutes)`);
-      }
-      toStore['code:' + item.file] = { sha256: hash, code };
-    }
-    changed = Object.keys(toStore).length > 0 || state.manifest?.build !== manifest.build;
-    if (Object.keys(toStore).length) await chrome.storage.local.set(toStore);
+    // Licence vérifiée AVANT de télécharger : le serveur ne livre le code
+    // qu'à une clé valide (403 sinon). On envoie l'empreinte de la clé en
+    // en-tête ; sans clé valide, rien n'est téléchargé (bannière affichée).
+    licence = await checkLicence(base, cfg, manifest);
+    licence.keyHash = keyHash;
 
-    // Note de version des modules : affichée une fois quand la version de
-    // publication change (jamais à la toute première installation).
-    const rel = manifest.release;
-    if (rel && rel.version && rel.version !== state.releaseSeen) {
-      if (state.releaseSeen) {
-        await addNotice({
-          id: 'release-' + rel.version,
-          title: `Atelier MyUnisoft ${rel.version} activé`,
-          date: rel.date || '',
-          lines: rel.notes || [],
-        });
+    if (licenceOk(licence)) {
+      const auth = keyHash ? { 'x-atm-licence': keyHash } : undefined;
+      // Télécharge uniquement ce qui a changé, vérifie chaque fichier AVANT de
+      // remplacer quoi que ce soit : en cas d'erreur, l'ancienne version reste.
+      const toStore = {};
+      for (const item of [manifest.runtime, ...manifest.scripts]) {
+        const cached = await getCachedCode(item.file);
+        if (cached && cached.sha256 === item.sha256) continue;
+        const code = await fetchText(base + item.file, auth);
+        const hash = await sha256Hex(code);
+        if (hash !== item.sha256) {
+          throw new Error(`Empreinte incorrecte pour ${item.file} (cache du serveur pas encore à jour ? réessayer dans quelques minutes)`);
+        }
+        toStore['code:' + item.file] = { sha256: hash, code };
       }
-      await patchState({ releaseSeen: rel.version });
+      changed = Object.keys(toStore).length > 0 || state.manifest?.build !== manifest.build;
+      if (Object.keys(toStore).length) await chrome.storage.local.set(toStore);
+
+      // Note de version : affichée une fois quand la version de publication
+      // change (jamais à la toute première installation).
+      const rel = manifest.release;
+      if (rel && rel.version && rel.version !== state.releaseSeen) {
+        if (state.releaseSeen) {
+          await addNotice({
+            id: 'release-' + rel.version,
+            title: `Atelier MyUnisoft ${rel.version} activé`,
+            date: rel.date || '',
+            lines: rel.notes || [],
+          });
+        }
+        await patchState({ releaseSeen: rel.version });
+      }
     }
   } catch (e) {
     error = String(e.message || e);
   }
 
-  const licence = await checkLicence(base, cfg, manifest);
-  licence.keyHash = cfg.licenceKey ? await sha256Hex(normalizeKey(cfg.licenceKey)) : null;
+  if (!licence) licence = await checkLicence(base, cfg, manifest);
+  licence.keyHash = keyHash;
   const licenceChanged = (state.licence || {}).status !== licence.status;
 
   await patchState({

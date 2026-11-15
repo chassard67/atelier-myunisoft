@@ -34,6 +34,13 @@ jobs:
         run: for f in scripts/*.js scripts/lib/*.js extension/*.js; do node --check "$f" || exit 1; done
       - name: Construire dist/
         run: node tools/build.mjs --zip
+      - name: Ne pas exposer le code des modules sur Pages (il vit dans le serveur)
+        run: |
+          cd dist
+          rm -f manifest.json licences.json
+          find . -maxdepth 1 -name '*.js' -delete
+          rm -rf lib
+          ls -1
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Atelier MyUnisoft",
   "short_name": "Atelier MU",
-  "version": "1.1.2",
+  "version": "1.2.0",
   "description": "Personnalisation de l'interface MyUnisoft (Balance, Premium, Consultation…). Les modules se mettent à jour automatiquement.",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEArOqRaV8LsdmfT9s2lcwX3sBUImx4qXtz0cLcNtkPKzAgxlhFSlLAosWfch3aFuB9BqolPckpnCwyVNEfkZZn/n24GHS9KHKTlYUkJJrrobcz02/ZwAWONQ/zlpgv/wlpcbAFdGud8PVfm/GvrMndSyvxAuY11x9rkqoOTh07o74igDPD1N7XZN/X/tJdUaizrTvjt5YhiyZOVuuJmeWhxN1t3o/Dab9jyqUfXo5BofvXrAedfYzqzPNY+hZVINMlyKD1OmppP6rr+gJ7Fck1dKFG3IzRsYH5XYI7XWmEGH6rZfTAIH70GxqBrCYdHVOiKsaLGDyhuJzQbPpAdWWEywIDAQAB",
   "minimum_chrome_version": "120",
@@ -14,7 +14,8 @@
   ],
   "host_permissions": [
     "https://connect.lgassocies.com/*",
-    "https://*.myunisoft.fr/*"
+    "https://*.myunisoft.fr/*",
+    "https://atelier-myunisoft.chassard.workers.dev/*"
   ],
   "background": {
     "service_worker": "background.js",

@@ -4,9 +4,10 @@
 // publiées, qui peuvent donc évoluer sans réinstaller l'extension).
 
 export const DEFAULTS = {
-  // Adresse GitHub Pages par défaut ; à remplacer par le domaine perso
-  // (ex. https://atelier.mondomaine.fr/) une fois le CNAME configuré.
-  baseUrl: 'https://chassard67.github.io/atelier-myunisoft/',
+  // Serveur de licences (Cloudflare Worker) : il ne livre le code des modules
+  // qu'aux clés valides. Adresse propre possible plus tard (ex.
+  // https://atelier.mondomaine.fr/) sans rien casser.
+  baseUrl: 'https://atelier-myunisoft.chassard.workers.dev/',
 
   // Intervalle de vérification automatique (mises à jour + licence), minutes.
   checkIntervalMin: 30,
@@ -36,6 +37,7 @@ export const LICENCE_GRACE_DAYS = 14;
 
 // Notes affichées aux utilisateurs quand la COQUILLE elle-même est mise à jour.
 export const EXTENSION_NOTES = {
+  '1.2.0': ['Les modules Premium sont maintenant servis par un serveur de licences : le code n\'est livré qu\'aux clés valides.'],
   '1.1.2': ['Boutons « Vérifier les mises à jour » et « Recharger les onglets » placés en haut de la fenêtre de l\'extension.', 'Plus d\'alerte « source non officielle » à tort.'],
   '1.1.1': ['Correctif : la clé de licence est prise en compte dès sa validation.'],
   '1.1.0': [
