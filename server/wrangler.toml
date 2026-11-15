@@ -4,7 +4,7 @@ name = "atelier-myunisoft"
 main = "src/index.mjs"
 compatibility_date = "2026-01-01"
 
-# account_id = "À_RENSEIGNER"   # (ou via la variable CLOUDFLARE_ACCOUNT_ID en CI)
+account_id = "aea5fb9866d3c0fada117fbcfdfa8beb"
 
 # Stockage des licences (une entrée par clé : nom = sha-256(clé)).
 kv_namespaces = [
