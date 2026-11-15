@@ -24,7 +24,7 @@ if (!nsId || nsId === 'À_RENSEIGNER') { console.error('Renseigne l\'id du names
 
 for (const l of licences) {
   const value = JSON.stringify({ client: l.client || '', status: l.status || 'active', expires: l.expires || '' });
-  const args = ['wrangler', 'kv', 'key', 'put', '--namespace-id', nsId, l.hash, value];
+  const args = ['wrangler', 'kv', 'key', 'put', l.hash, value, '--namespace-id', nsId];
   if (dry) { console.log(args.join(' ')); continue; }
   execFileSync('npx', args, { cwd: path.join(ROOT, 'server'), stdio: 'inherit' });
   console.log(`✓ ${l.client || '(sans nom)'} [${l.status}]`);
