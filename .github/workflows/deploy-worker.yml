@@ -6,7 +6,7 @@ name: Déployer le serveur de licences
 on:
   push:
     branches: [main]
-    paths: ['scripts/**', 'publish.json', 'server/**', 'tools/**', '.github/workflows/deploy-worker.yml']
+    paths: ['scripts/**', 'publish.json', 'licences.json', 'server/**', 'tools/**', '.github/workflows/deploy-worker.yml']
   workflow_dispatch:
 
 jobs:
