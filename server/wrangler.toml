@@ -8,5 +8,5 @@ compatibility_date = "2026-01-01"
 
 # Stockage des licences (une entrée par clé : nom = sha-256(clé)).
 kv_namespaces = [
-  { binding = "LICENCES", id = "À_RENSEIGNER" }
+  { binding = "LICENCES", id = "b51a4a0658aa42078c978faeef19539d" }
 ]
