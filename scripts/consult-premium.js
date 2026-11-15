@@ -1,8 +1,12 @@
 // ==UserScript==
 // @name         MyUnisoft - Consultation Premium (page de consultation de compte maison)
 // @namespace    https://nicolas.chassard/myunisoft
-// @version      2.21-ext
-// @description  v2.21 (2026-11-13, demandé par Nicolas) : Taux TVA — si l'écriture porte à la fois du 4456 et du 4452 ou
+// @version      2.22-ext
+// @description  v2.22 (2026-11-15, demandé par Nicolas) : nouveau filtre de comptes généraux « Comptes 6063 à 6069 et
+//               615, débit > 500 € » (fournitures 6063→6069 + entretien/réparations 615) : sélectionne ces comptes et
+//               préremplit le filtre de colonne Débit sur « >500 » ; le filtre de colonne posé par un filtre de comptes est
+//               retiré automatiquement quand on change de filtre.
+//               v2.21 (2026-11-13, demandé par Nicolas) : Taux TVA — si l'écriture porte à la fois du 4456 et du 4452 ou
 //               4457 (autoliquidation), seule la TVA déductible (4456) entre dans le calcul ; sinon toutes les TVA.
 //               v2.20 (2026-11-13, demandé par Nicolas) : (1) filtre « Comptes d'attente et transitoires (47 et 58) » dans
 //               Comptes généraux ; (2) barre chronologique « Arrêté au » (exercices N et N+1, libellés MyUnisoft) entre la
@@ -330,6 +334,9 @@
     { key: 'p67', side: 'plan', label: 'Comptes 6 et 7 uniquement', test: (a) => /^[67]/.test(a.num) },
     // (v2.20) comptes d'attente et transitoires
     { key: 'p4758', side: 'plan', label: 'Comptes d\'attente et transitoires (47 et 58)', test: (a) => /^(47|58)/.test(a.num) },
+    // (v2.21) charges à contrôler : fournitures 6063 à 6069 + entretien/réparations 615,
+    // écritures au débit > 500 € (fil préremplit le filtre de colonne Débit).
+    { key: 'p606615', side: 'plan', label: 'Comptes 6063 à 6069 et 615, débit > 500 €', test: (a) => /^606[3-9]/.test(a.num) || /^615/.test(a.num), fil: { deb: '>500' } },
   ];
   function cutoff60() {
     const d = new Date(Date.now() - 60 * 86400000);
@@ -536,7 +543,7 @@
   // ------------------------------------------------------------------
   const S = {
     start: '', end: '', acc: '', accLabel: '', lines: [], loading: false,
-    lett: 'all', fil: { date: '', jnl: '', lett: '', lib: '', deb: '', cre: '', solde: '', ms: '', cpttc: '', cpht: '', cptva: '', piece: '', ech: '', com: '', who: '' },
+    lett: 'all', fil: { date: '', jnl: '', lett: '', lib: '', deb: '', cre: '', solde: '', ms: '', cpttc: '', cpht: '', cptva: '', piece: '', ech: '', com: '', who: '' }, modeFilKeys: null,
     sortK: 'date', sortD: 1, sel: new Set(), active: 0,
     amtOp: '=', amtVal: '', amtTol: '0', qText: '',
     ddOpen: false, ddIdx: 0, ddQ: '', accMode: '', accList: null, accIdx: -1, accAll: [], sideCache: {}, accCache: {}, shown: [],
@@ -2292,12 +2299,27 @@
     } catch (e) { apiLog.push('ERR save comment compte ' + e.message); toast('Commentaire du compte : ' + e.message); }
   }
 
+  // (v2.21) Certains filtres de comptes pré-appliquent un filtre de colonne (ex. « Débit > 500 »
+  // via m.fil). On retire d'abord celui posé par le filtre précédent pour ne pas le laisser
+  // traîner en changeant de filtre, puis on applique celui du nouveau filtre et on reflète la
+  // valeur dans les champs de filtre de colonne affichés.
+  function applyModeFilters(m) {
+    if (S.modeFilKeys) { S.modeFilKeys.forEach((k) => { S.fil[k] = ''; }); S.modeFilKeys = null; }
+    if (m && m.fil) {
+      S.modeFilKeys = Object.keys(m.fil);
+      S.modeFilKeys.forEach((k) => { S.fil[k] = m.fil[k]; });
+    }
+    const p = document.getElementById(PANEL_ID);
+    if (p) p.querySelectorAll('[data-f]').forEach((i) => { i.value = S.fil[i.dataset.f] || ''; });
+  }
+
   async function applyAccMode(key, keepAcc) {
     S.accMode = key;
     const p = document.getElementById(PANEL_ID);
     if (p) p.querySelector('[data-mode]').value = key;
-    if (!key) { S.accList = null; S.sideAcc = null; S.accIdx = -1; updateAccountUi(); return; }
+    if (!key) { applyModeFilters(null); S.accList = null; S.sideAcc = null; S.accIdx = -1; updateAccountUi(); return; }
     const m = ACC_MODES.find((x) => x.key === key);
+    applyModeFilters(m);
     setBusy(true, 'Recherche des comptes…');
     try {
       const accs = m.side === 'plan' ? S.accAll : await loadSide(m.side);

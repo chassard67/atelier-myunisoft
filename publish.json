@@ -2,11 +2,10 @@
   "minExtensionVersion": "1.1.0",
   "licenceRequired": true,
   "release": {
-    "version": "1.4.0",
+    "version": "1.4.1",
     "date": "2026-11-15",
     "notes": [
-      "Les modules Premium sont désormais servis par un serveur de licences : le code n'est livré qu'aux clés valides (réinstaller l'extension 1.2.0).",
-      "Affichage Premium : le centrage « grand écran » ne s'applique plus qu'au-delà de 2200 px (un portable Full HD 1920 n'est plus centré)."
+      "Consultation Premium : nouveau filtre de comptes généraux « Comptes 6063 à 6069 et 615, débit > 500 € »."
     ]
   },
   "defaultMatches": [
