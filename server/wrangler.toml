@@ -1,0 +1,12 @@
+# Configuration du Worker « serveur de licences » Atelier MyUnisoft.
+# Renseigne account_id et l'id du namespace KV (voir server/README.md).
+name = "atelier-myunisoft"
+main = "src/index.mjs"
+compatibility_date = "2026-01-01"
+
+# account_id = "À_RENSEIGNER"   # (ou via la variable CLOUDFLARE_ACCOUNT_ID en CI)
+
+# Stockage des licences (une entrée par clé : nom = sha-256(clé)).
+kv_namespaces = [
+  { binding = "LICENCES", id = "À_RENSEIGNER" }
+]
