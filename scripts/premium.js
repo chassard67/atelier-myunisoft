@@ -1,8 +1,11 @@
 // ==UserScript==
 // @name         MyUnisoft - Premium (core)
 // @namespace    https://nicolas.chassard/myunisoft
-// @version      4.16-ext
-// @description  v4.16 (2026-11-13) : l'aligneur de cellules ignore aussi Consultation Premium et Balance Premium (le total Crédit
+// @version      4.17-ext
+// @description  v4.17 (2026-11-15, retour de Nicolas) : le centrage « grand écran » ne s'applique plus qu'au-delà de
+//               2200 px de large (au lieu de 1920) : un portable Full HD (1920×1080, ex. Acer N19H5) n'est plus centré ;
+//               seuls les vrais grands écrans (2560, ultra-wide, 4K) le sont.
+//               v4.16 (2026-11-13) : l'aligneur de cellules ignore aussi Consultation Premium et Balance Premium (le total Crédit
 //               de Consultation Premium était remis à gauche).
 //               v4.15 (2026-11-13, demandé par Nicolas) : panneau compact des méga-menus (Tenue, Révision,
 //               Déclarations, Paramètres… resserrés et collés à la barre bleue, ajouté le 2026-10-22) supprimé :
@@ -672,7 +675,7 @@
     ? '' // fenêtre de consultation, ou mode "pleine largeur" (WIDE_MODE_KEY) activé : aucune restriction
     : isElectron
     ? `
-      @media (min-width: 1920px) {
+      @media (min-width: 2200px) {
         .pageContent, main, [role="main"], .MuiContainer-root {
           max-width: 60vw !important;
           margin-left: auto !important;
@@ -746,7 +749,7 @@
       }
     `
     : `
-      @media (min-width: 1920px) {
+      @media (min-width: 2200px) {
         .pageContent, main, [role="main"], .MuiContainer-root {
           max-width: 60vw !important;
           margin-left: 0 !important;
@@ -845,7 +848,7 @@
   // ne perturbe donc pas les widgets qui mesurent leur propre taille en JS.
   function positionDrawerNextToContent() {
     if (!isElectron || isConsultWindow) return; // inutile en Electron sur la fenêtre de consultation
-    const media = window.matchMedia('(min-width: 1920px)');
+    const media = window.matchMedia('(min-width: 2200px)');
     // Le menu de gauche = le drawer docké qui contient le papier de navigation
     // (getSidebar()), PAS simplement le premier drawer docké : un panneau latéral
     // (MyU Vision) est lui aussi un MuiDrawer docké.
