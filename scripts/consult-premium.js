@@ -1,8 +1,12 @@
 // ==UserScript==
 // @name         MyUnisoft - Consultation Premium (page de consultation de compte maison)
 // @namespace    https://nicolas.chassard/myunisoft
-// @version      2.22-ext
-// @description  v2.22 (2026-11-15, demandé par Nicolas) : nouveau filtre de comptes généraux « Comptes 6063 à 6069 et
+// @version      2.23-ext
+// @description  v2.23 (2026-11-17, demandé par Nicolas) : 4 nouveaux filtres de comptes — « Fourn. comptes mouvementés
+//               uniquement » et « Clients comptes mouvementés uniquement » (au moins une écriture sur la période) ;
+//               « Fourn. comptes avec factures non payées » (crédit non lettré) et « Clients comptes avec factures non
+//               encaissées » (débit non lettré), sans condition d'ancienneté (≠ les filtres « plus de 60 j »).
+//               v2.22 (2026-11-15, demandé par Nicolas) : nouveau filtre de comptes généraux « Comptes 6063 à 6069 et
 //               615, débit > 500 € » (fournitures 6063→6069 + entretien/réparations 615) : sélectionne ces comptes et
 //               préremplit le filtre de colonne Débit sur « >500 » ; le filtre de colonne posé par un filtre de comptes est
 //               retiré automatiquement quand on change de filtre.
@@ -319,15 +323,23 @@
   // ------------------------------------------------------------------
   const ACC_MODES = [
     { key: 'fall', side: 'fourn', label: 'Tous les fournisseurs', test: () => true },
+    // (v2.23) comptes mouvementés uniquement : au moins une écriture sur la période
+    { key: 'fmv', side: 'fourn', label: 'Fourn. comptes mouvementés uniquement', test: (a) => a.lines.some((l) => l.d || l.c) },
     { key: 'fnl', side: 'fourn', label: 'Fourn. débits non lettrés', test: (a) => a.lines.some((l) => !l.lett && l.d > 0) },
     { key: 'fz', side: 'fourn', label: 'Fourn. solde proche de 0 (entre -1 et 1)', test: (a) => Math.abs(a.solde) > 0.004 && Math.abs(a.solde) <= 1.004 },
     { key: 'f60', side: 'fourn', label: 'Fourn. factures non soldées depuis plus de 60 j', test: (a, cut) => a.lines.some((l) => !l.lett && l.c > 0 && (l.date || '9') < cut) },
+    // (v2.23) factures fournisseurs non payées : crédit (facture) non lettré, sans condition d'ancienneté
+    { key: 'fnp', side: 'fourn', label: 'Fourn. comptes avec factures non payées', test: (a) => a.lines.some((l) => !l.lett && l.c > 0) },
     { key: 'fdeb', side: 'fourn', label: 'Fourn. débiteurs', test: (a) => a.solde > 0.004 },
     { key: 'fvide', side: 'fourn', label: 'Fourn. avec intitulé de compte vide', test: (a) => !a.label },
     { key: 'call', side: 'client', label: 'Tous les clients', test: () => true },
+    // (v2.23) comptes mouvementés uniquement : au moins une écriture sur la période
+    { key: 'cmv', side: 'client', label: 'Clients comptes mouvementés uniquement', test: (a) => a.lines.some((l) => l.d || l.c) },
     { key: 'cnl', side: 'client', label: 'Clients crédits non lettrés', test: (a) => a.lines.some((l) => !l.lett && l.c > 0) },
     { key: 'cz', side: 'client', label: 'Clients solde proche de 0 (entre -1 et 1)', test: (a) => Math.abs(a.solde) > 0.004 && Math.abs(a.solde) <= 1.004 },
     { key: 'c60', side: 'client', label: 'Clients factures non soldées depuis plus de 60 j', test: (a, cut) => a.lines.some((l) => !l.lett && l.d > 0 && (l.date || '9') < cut) },
+    // (v2.23) factures clients non encaissées : débit (facture) non lettré, sans condition d'ancienneté
+    { key: 'cne', side: 'client', label: 'Clients comptes avec factures non encaissées', test: (a) => a.lines.some((l) => !l.lett && l.d > 0) },
     { key: 'ccred', side: 'client', label: 'Clients créditeurs', test: (a) => a.solde < -0.004 },
     { key: 'cvide', side: 'client', label: 'Clients avec intitulé de compte vide', test: (a) => !a.label },
     { key: 'pg', side: 'plan', label: 'Tous les comptes généraux', test: (a) => /^\d+$/.test(a.num) && !/^(40|41)/.test(a.num) },

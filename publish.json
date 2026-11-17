@@ -2,10 +2,10 @@
   "minExtensionVersion": "1.1.0",
   "licenceRequired": true,
   "release": {
-    "version": "1.4.1",
-    "date": "2026-11-15",
+    "version": "1.4.2",
+    "date": "2026-11-17",
     "notes": [
-      "Consultation Premium : nouveau filtre de comptes généraux « Comptes 6063 à 6069 et 615, débit > 500 € »."
+      "Consultation Premium : 4 nouveaux filtres de comptes — fournisseurs et clients « mouvementés uniquement », fournisseurs « factures non payées », clients « factures non encaissées »."
     ]
   },
   "defaultMatches": [
