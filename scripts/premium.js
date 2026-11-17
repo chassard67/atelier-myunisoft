@@ -1,8 +1,11 @@
 // ==UserScript==
 // @name         MyUnisoft - Premium (core)
 // @namespace    https://nicolas.chassard/myunisoft
-// @version      4.17-ext
-// @description  v4.17 (2026-11-15, retour de Nicolas) : le centrage « grand écran » ne s'applique plus qu'au-delà de
+// @version      4.18-ext
+// @description  v4.18 (2026-11-17, retour de Nicolas) : les cellules de DATE ne reçoivent plus la police à chasse fixe
+//               (Consolas, plus large) : elle débordait d'une colonne native calibrée pour la police par défaut et
+//               tronquait la date (colonne Date de la saisie « 26/10/202… »). Seuls les montants restent en Consolas.
+//               v4.17 (2026-11-15, retour de Nicolas) : le centrage « grand écran » ne s'applique plus qu'au-delà de
 //               2200 px de large (au lieu de 1920) : un portable Full HD (1920×1080, ex. Acer N19H5) n'est plus centré ;
 //               seuls les vrais grands écrans (2560, ultra-wide, 4K) le sont.
 //               v4.16 (2026-11-13) : l'aligneur de cellules ignore aussi Consultation Premium et Balance Premium (le total Crédit
@@ -1063,7 +1066,10 @@
     cells.forEach((cell) => {
       cell.classList.add('tmbc-scanned');
       const text = cell.textContent.trim();
-      if (text && /\d/.test(text) && (NUMERIC_RE.test(text) || DATE_RE.test(text))) {
+      // (v4.18) les DATES ne reçoivent plus la police mono (Consolas) : plus large que la
+      // police native, elle débordait d'une colonne native dimensionnée pour cette dernière
+      // (colonne Date de la saisie tronquée « 26/10/202… »). Seuls les montants restent mono.
+      if (text && /\d/.test(text) && NUMERIC_RE.test(text) && !DATE_RE.test(text)) {
         cell.classList.add('tmbc-numeric');
       }
     });
