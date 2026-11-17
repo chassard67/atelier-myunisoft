@@ -2,10 +2,10 @@
   "minExtensionVersion": "1.1.0",
   "licenceRequired": true,
   "release": {
-    "version": "1.4.2",
+    "version": "1.4.3",
     "date": "2026-11-17",
     "notes": [
-      "Consultation Premium : 4 nouveaux filtres de comptes — fournisseurs et clients « mouvementés uniquement », fournisseurs « factures non payées », clients « factures non encaissées »."
+      "Consultation Premium : la liste « Filtre de comptes » affiche désormais toutes les options sans ascenseur."
     ]
   },
   "defaultMatches": [

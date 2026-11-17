@@ -1,8 +1,11 @@
 // ==UserScript==
 // @name         MyUnisoft - Consultation Premium (page de consultation de compte maison)
 // @namespace    https://nicolas.chassard/myunisoft
-// @version      2.23-ext
-// @description  v2.23 (2026-11-17, demandé par Nicolas) : 4 nouveaux filtres de comptes — « Fourn. comptes mouvementés
+// @version      2.24-ext
+// @description  v2.24 (2026-11-17, demandé par Nicolas) : la liste « Filtre de comptes » n'est plus un <select> natif
+//               (qui ajoutait un ascenseur dès qu'il y avait beaucoup d'options) mais une liste déroulante maison qui
+//               affiche toutes les options sans scroll, groupées Fournisseurs / Clients / Comptes généraux.
+//               v2.23 (2026-11-17, demandé par Nicolas) : 4 nouveaux filtres de comptes — « Fourn. comptes mouvementés
 //               uniquement » et « Clients comptes mouvementés uniquement » (au moins une écriture sur la période) ;
 //               « Fourn. comptes avec factures non payées » (crédit non lettré) et « Clients comptes avec factures non
 //               encaissées » (débit non lettré), sans condition d'ancienneté (≠ les filtres « plus de 60 j »).
@@ -1796,7 +1799,10 @@
       '<div style="position:relative"><input data-acc type="text" autocomplete="off" style="' + inp + ';width:360px"><div data-dd style="display:none;position:absolute;left:0;top:100%;margin-top:2px;width:600px;max-height:380px;overflow:auto;background:#fff;border:1px solid #aebbd0;border-radius:6px;box-shadow:0 8px 24px rgba(15,42,82,.25);z-index:60"></div></div>' +
       '<button data-act="next" type="button" style="' + btn + ';padding:7px 10px">▶</button>' +
       '<span data-count style="font-family:' + MONO + ';color:#5b6b85;min-width:56px"></span></div></div>' +
-      '<div style="display:flex;flex-direction:column;gap:3px"><span style="' + lbl + '">Filtre de comptes</span><select data-mode style="' + inp + ';width:340px"></select></div>' +
+      '<div style="display:flex;flex-direction:column;gap:3px"><span style="' + lbl + '">Filtre de comptes</span>' +
+      '<div style="position:relative"><button type="button" data-modebtn style="' + inp + ';width:340px;text-align:left;cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:8px;background:#fff">' +
+      '<span data-modelbl style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Tous les comptes</span><span style="color:#5b6b85;flex:0 0 auto">▾</span></button>' +
+      '<div data-modelist style="display:none;position:absolute;left:0;top:100%;margin-top:2px;min-width:100%;white-space:nowrap;background:#fff;border:1px solid #aebbd0;border-radius:6px;box-shadow:0 8px 24px rgba(15,42,82,.25);z-index:70;padding:4px 0"></div></div></div>' +
       '<div style="display:flex;flex-direction:column;gap:3px"><span style="' + lbl + '">Du</span><input data-start type="text" style="' + inp + ';width:104px;font-family:' + MONO + '"></div>' +
       '<div style="display:flex;flex-direction:column;gap:3px"><span style="' + lbl + '">Au</span><input data-end type="text" style="' + inp + ';width:104px;font-family:' + MONO + '"></div>' +
       '</div>' +
@@ -1834,15 +1840,11 @@
     placePanel(p);
 
     // valeurs initiales
-    const modeSel = p.querySelector('[data-mode]');
-    modeSel.innerHTML = '<option value="">Tous les comptes</option><optgroup label="Fournisseurs">' +
-      ACC_MODES.filter((m) => m.side === 'fourn').map((m) => '<option value="' + m.key + '">' + m.label + '</option>').join('') +
-      '</optgroup><optgroup label="Clients">' + ACC_MODES.filter((m) => m.side === 'client').map((m) => '<option value="' + m.key + '">' + m.label + '</option>').join('') + '</optgroup>' +
-      '<optgroup label="Comptes généraux">' + ACC_MODES.filter((m) => m.side === 'plan').map((m) => '<option value="' + m.key + '">' + m.label + '</option>').join('') + '</optgroup>';
+    buildModeList(p);
     p.querySelector('[data-start]').value = isoToFr(S.start);
     p.querySelector('[data-end]').value = isoToFr(S.end);
     p.querySelector('[data-lett]').value = S.lett;
-    p.querySelector('[data-mode]').value = S.accMode;
+    updateModeButton(p);
     applyColW(p);
     wire(p);
     document.addEventListener('keydown', onDocKey, true);
@@ -1855,6 +1857,10 @@
 
   function wire(p) {
     p.addEventListener('click', (ev) => {
+      // (v2.24) liste déroulante maison du filtre de comptes
+      const mk = ev.target.closest('[data-mk]');
+      if (mk) { toggleModeList(p, false); applyAccMode(mk.dataset.mk); return; }
+      if (ev.target.closest('[data-modebtn]')) { toggleModeList(p); return; }
       const a = ev.target.closest('[data-act]');
       if (a) {
         const act = a.dataset.act;
@@ -2024,7 +2030,6 @@
       if (t.matches('[data-body] input[type=checkbox]')) { toggleSel(+t.closest('tr').dataset.id); return; }
       if (t.matches('[data-all]')) { S.shown.forEach((l) => { if (t.checked) S.sel.add(l.id); else S.sel.delete(l.id); }); render(true); return; }
       if (t.matches('[data-lett]')) { S.lett = t.value; render(); }
-      else if (t.matches('[data-mode]')) applyAccMode(t.value);
       else if (t.matches('[data-aop]')) { S.amtOp = t.value; render(); }
       else if (t.matches('[data-start],[data-end]')) changePeriod();
     });
@@ -2311,6 +2316,35 @@
     } catch (e) { apiLog.push('ERR save comment compte ' + e.message); toast('Commentaire du compte : ' + e.message); }
   }
 
+  // (v2.24) Liste déroulante « Filtre de comptes » maison : un <select> natif ajoutait un
+  // ascenseur dès qu'il y avait beaucoup d'options. Ici toutes les options s'affichent sans
+  // scroll (pas de max-height). Groupée Fournisseurs / Clients / Comptes généraux.
+  function modeLabel(key) { if (!key) return 'Tous les comptes'; const m = ACC_MODES.find((x) => x.key === key); return m ? m.label : 'Tous les comptes'; }
+  function buildModeList(p) {
+    if (!document.getElementById('tmbc-cp-mk-style')) {
+      const st = document.createElement('style'); st.id = 'tmbc-cp-mk-style';
+      st.textContent = '#' + PANEL_ID + ' .cp-mk:hover{background:#dbe8fb}';
+      document.head.appendChild(st);
+    }
+    const item = (k, l) => '<div data-mk="' + esc(k) + '" class="cp-mk" style="padding:5px 14px;cursor:pointer;font-size:13px">' + esc(l) + '</div>';
+    const grp = (title, side) => '<div style="padding:6px 12px 2px;font-size:11px;color:#5b6b85;font-weight:600">' + title + '</div>' + ACC_MODES.filter((m) => m.side === side).map((m) => item(m.key, m.label)).join('');
+    const list = p.querySelector('[data-modelist]');
+    if (list) list.innerHTML = item('', 'Tous les comptes') + grp('Fournisseurs', 'fourn') + grp('Clients', 'client') + grp('Comptes généraux', 'plan');
+    if (!window.__tmbcCpModeOut) {
+      window.__tmbcCpModeOut = true;
+      document.addEventListener('mousedown', (e) => {
+        const pp = document.getElementById(PANEL_ID); if (!pp) return;
+        const dl = pp.querySelector('[data-modelist]'); if (!dl || dl.style.display === 'none') return;
+        if (!e.target.closest('[data-modelist]') && !e.target.closest('[data-modebtn]')) toggleModeList(pp, false);
+      }, true);
+    }
+  }
+  function updateModeButton(p) { const l = p && p.querySelector('[data-modelbl]'); if (l) l.textContent = modeLabel(S.accMode); }
+  function toggleModeList(p, show) {
+    const list = p && p.querySelector('[data-modelist]'); if (!list) return;
+    list.style.display = (show == null ? list.style.display === 'none' : show) ? 'block' : 'none';
+  }
+
   // (v2.21) Certains filtres de comptes pré-appliquent un filtre de colonne (ex. « Débit > 500 »
   // via m.fil). On retire d'abord celui posé par le filtre précédent pour ne pas le laisser
   // traîner en changeant de filtre, puis on applique celui du nouveau filtre et on reflète la
@@ -2328,7 +2362,7 @@
   async function applyAccMode(key, keepAcc) {
     S.accMode = key;
     const p = document.getElementById(PANEL_ID);
-    if (p) p.querySelector('[data-mode]').value = key;
+    if (p) updateModeButton(p);
     if (!key) { applyModeFilters(null); S.accList = null; S.sideAcc = null; S.accIdx = -1; updateAccountUi(); return; }
     const m = ACC_MODES.find((x) => x.key === key);
     applyModeFilters(m);
