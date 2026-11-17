@@ -2,11 +2,11 @@
   "minExtensionVersion": "1.1.0",
   "licenceRequired": true,
   "release": {
-    "version": "1.4.4",
+    "version": "1.4.5",
     "date": "2026-11-17",
     "notes": [
-      "Saisie : la colonne Date n'est plus tronquée (les dates ne passent plus en police à chasse fixe).",
-      "Consultation Premium : liste « Filtre de comptes » sans ascenseur ; 4 nouveaux filtres fournisseurs/clients."
+      "Saisie : clic droit sur une ligne → nouvelle option « Insérer une ligne » (ajoute une ligne, comme Ctrl + +).",
+      "Saisie : colonne Date plus tronquée. Consultation Premium : filtre de comptes sans ascenseur + nouveaux filtres."
     ]
   },
   "defaultMatches": [

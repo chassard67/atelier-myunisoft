@@ -1,8 +1,11 @@
 // ==UserScript==
 // @name         MyUnisoft - Premium (core)
 // @namespace    https://nicolas.chassard/myunisoft
-// @version      4.18-ext
-// @description  v4.18 (2026-11-17, retour de Nicolas) : les cellules de DATE ne reçoivent plus la police à chasse fixe
+// @version      4.19-ext
+// @description  v4.19 (2026-11-17, demandé par Nicolas) : menu clic droit de la SAISIE — ajout de « Insérer une ligne »
+//               à côté de « Supprimer la ligne » (menu MUI natif), qui déclenche la même action que Ctrl + + (ajout
+//               d'une ligne). On n'ajoute que notre propre <li> en fin de menu, aucun nœud natif n'est déplacé/retiré.
+//               v4.18 (2026-11-17, retour de Nicolas) : les cellules de DATE ne reçoivent plus la police à chasse fixe
 //               (Consolas, plus large) : elle débordait d'une colonne native calibrée pour la police par défaut et
 //               tronquait la date (colonne Date de la saisie « 26/10/202… »). Seuls les montants restent en Consolas.
 //               v4.17 (2026-11-15, retour de Nicolas) : le centrage « grand écran » ne s'applique plus qu'au-delà de
@@ -1966,6 +1969,7 @@
     installDiagKey();
     mountScrollTopButton();
     wireCtrlWheelZoom();
+    wireSaisieContextMenu();
     installApiHeaderSniffer();
 
     if (isDisabled()) {
@@ -1993,6 +1997,63 @@
         console.error('[tmbc-core] erreur dans un module scan()', e);
       }
     });
+  }
+
+  // --- Menu contextuel de la SAISIE (/accounting/newEntry) : "Insérer une ligne" ---
+  // (v4.19, demandé par Nicolas) Le clic droit sur une ligne de saisie ouvre un menu
+  // MUI natif qui ne propose que "Supprimer la ligne". On y ajoute "Insérer une ligne",
+  // qui déclenche la même action que Ctrl + + (ajout d'une ligne). IMPORTANT : on
+  // n'ajoute QUE notre propre <li> (clone du natif pour hériter du style MUI) en fin de
+  // menu — aucun nœud natif n'est déplacé ni retiré (cf. règle anti-crash React).
+  function findDeleteLineItem() {
+    const items = document.querySelectorAll('li[role="menuitem"]');
+    for (const it of items) if (it.textContent.trim() === 'Supprimer la ligne') return it;
+    return null;
+  }
+  function closeOpenMuiMenu() {
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', keyCode: 27, which: 27, bubbles: true }));
+  }
+  function addSaisieLine() {
+    // Reproduit Ctrl + + (la combinaison native d'ajout de ligne). On couvre les deux
+    // "+" possibles (pavé numérique NumpadAdd, et touche principale Equal avec Maj) et on
+    // cible plusieurs éléments car le gestionnaire natif peut écouter globalement ou sur la grille.
+    const targets = [document.activeElement, document.body, document].filter(Boolean);
+    const variants = [
+      { key: '+', code: 'NumpadAdd', shiftKey: false },
+      { key: '+', code: 'Equal', shiftKey: true },
+    ];
+    targets.forEach((t) => variants.forEach((v) => {
+      ['keydown', 'keypress', 'keyup'].forEach((type) => {
+        t.dispatchEvent(new KeyboardEvent(type, { key: v.key, code: v.code, ctrlKey: true, shiftKey: v.shiftKey, bubbles: true, cancelable: true }));
+      });
+    }));
+  }
+  function injectInsertLineItem(del) {
+    const ul = del.parentElement;
+    if (!ul || ul.querySelector('[data-tmbc-insert-line]')) return;
+    const ins = del.cloneNode(true); // hérite des classes MUI (style identique)
+    ins.textContent = 'Insérer une ligne';
+    ins.setAttribute('data-tmbc-insert-line', '1');
+    ins.classList.remove('Mui-focusVisible', 'Mui-selected');
+    ins.addEventListener('mousedown', (e) => { e.preventDefault(); e.stopPropagation(); }, true);
+    ins.addEventListener('click', (e) => {
+      e.preventDefault(); e.stopPropagation();
+      closeOpenMuiMenu();
+      setTimeout(addSaisieLine, 60);
+    }, true);
+    ul.appendChild(ins); // ajouté EN FIN de menu, sans toucher aux items natifs
+  }
+  function wireSaisieContextMenu() {
+    if (window.__tmbcSaisieCtx) return;
+    window.__tmbcSaisieCtx = true;
+    document.addEventListener('contextmenu', () => {
+      let tries = 0;
+      const timer = setInterval(() => {
+        if (++tries > 20) { clearInterval(timer); return; } // ~1 s max
+        const del = findDeleteLineItem();
+        if (del) { clearInterval(timer); injectInsertLineItem(del); }
+      }, 50);
+    }, true);
   }
 
   window.addEventListener('DOMContentLoaded', () => {
